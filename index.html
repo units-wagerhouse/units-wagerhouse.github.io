@@ -391,6 +391,10 @@ function markAcceptedChallengesSeen() {
   if (changed) { try { localStorage.setItem('ww_seen_accepted', JSON.stringify([...seen])); } catch (e) {} }
 }
 let poolBuilderLegs = []; // [{sport, gameId, gameLabel, betType, sideAbbr, line, spreadLabel, displayText}]
+let poolBuilderBuyIn = 5;
+let poolBuilderBudget = 10;
+let poolBuilderPaid = 1;
+let poolBuilderVisibility = 'public';
 let openChallengeMaxUnits = null; // null = no cap
 let challengeTypeSelection = {}; // gameId -> 'spread' | 'total' | 'playerprop'
 
@@ -2778,24 +2782,29 @@ function renderPoolBuilder() {
 
   const cfgCard = el('div'); cfgCard.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
   cfgCard.appendChild(el('label', null, 'Buy-in (units per person)'));
-  const buyInInput = el('input'); buyInInput.type = 'number'; buyInInput.min = '0.5'; buyInInput.step = '0.5'; buyInInput.value = '5';
+  const buyInInput = el('input'); buyInInput.type = 'number'; buyInInput.min = '0.5'; buyInInput.step = '0.5'; buyInInput.value = String(poolBuilderBuyIn);
   buyInInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+  buyInInput.oninput = () => { poolBuilderBuyIn = buyInInput.value; };
   cfgCard.appendChild(buyInInput);
 
   cfgCard.appendChild(el('label', null, 'House units per person (for picking, not real money)'));
-  const budgetInput = el('input'); budgetInput.type = 'number'; budgetInput.min = '1'; budgetInput.step = '1'; budgetInput.value = '10';
+  const budgetInput = el('input'); budgetInput.type = 'number'; budgetInput.min = '1'; budgetInput.step = '1'; budgetInput.value = String(poolBuilderBudget);
   budgetInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+  budgetInput.oninput = () => { poolBuilderBudget = budgetInput.value; };
   cfgCard.appendChild(budgetInput);
 
   cfgCard.appendChild(el('label', null, 'Paid positions (how many finishers split the purse)'));
-  const paidInput = el('input'); paidInput.type = 'number'; paidInput.min = '1'; paidInput.step = '1'; paidInput.value = '1';
+  const paidInput = el('input'); paidInput.type = 'number'; paidInput.min = '1'; paidInput.step = '1'; paidInput.value = String(poolBuilderPaid);
   paidInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+  paidInput.oninput = () => { poolBuilderPaid = paidInput.value; };
   cfgCard.appendChild(paidInput);
 
   cfgCard.appendChild(el('label', null, 'Who can join'));
   const visSel = el('select');
   visSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;box-sizing:border-box;';
   [['public','\ud83d\udce2 Anyone (public)'],['friend','\ud83d\udc64 Friends only']].forEach(([v,l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; visSel.appendChild(o); });
+  visSel.value = poolBuilderVisibility;
+  visSel.onchange = () => { poolBuilderVisibility = visSel.value; };
   cfgCard.appendChild(visSel);
   wrap.appendChild(cfgCard);
 
@@ -2831,6 +2840,7 @@ function renderPoolBuilder() {
     try {
       await savePicks(allPicks);
       poolBuilderLegs = [];
+      poolBuilderBuyIn = 5; poolBuilderBudget = 10; poolBuilderPaid = 1; poolBuilderVisibility = 'public';
       poolBuilderOpen = false;
       render();
     } catch (e) {
@@ -3897,7 +3907,7 @@ function renderExistingChallenges() {
     toggle.appendChild(pill);
   });
 
-  const all = allPicks.filter(p => p.poolType === 'challenge');
+  const all = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
   const stillActive = ch => ch.status === 'open';
   const friendNames = new Set((profile.friends || []).map(f => f.name));
   let byView;
@@ -4128,7 +4138,7 @@ function computeChallengeProfit(ch, iAmCreator) {
 
 function renderCompletedChallenges() {
   const wrap = el('div');
-  const mine = allPicks.filter(p => p.poolType === 'challenge' && (p.creator === profile.name || p.acceptedBy === profile.name || p.targetFriend === profile.name));
+  const mine = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && (p.creator === profile.name || p.acceptedBy === profile.name || p.targetFriend === profile.name));
 
   // league filter chips
   const leaguesPresent = [...new Set(mine.map(ch => ch.sport).filter(Boolean))];
