@@ -1184,7 +1184,7 @@ function renderAccountScreen() {
     txs.forEach(tx => {
       const row = el('div', 'pick-row');
       const left = el('div');
-      left.appendChild(el('div', 'who', tx.type === 'deposit' ? 'Deposit' : 'Withdrawal'));
+      left.appendChild(el('div', 'who', tx.relatedChallengeId ? (tx.note || 'Bet') : (tx.type === 'deposit' ? 'Deposit' : 'Withdrawal')));
       left.appendChild(el('div', 'detail', new Date(tx.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })));
       row.appendChild(left);
       const amtEl = el('div', null, (tx.type === 'deposit' ? '+' : '-') + '$' + tx.amount.toFixed(2));
@@ -3347,7 +3347,7 @@ function renderChallengeRow(ch) {
   const myPayout = isMine ? ch.units : Math.round(displayUnitsFor(ch) * mult * 100) / 100;
   const myRatio = isMine ? '1:1' : ratioLabel(mult);
   const myMarketTxt = isMine ? opponentSideView(ch) : marketTxt;
-  const slipLabel = `${isMine ? 'Your side' : 'Take'}: ${myMarketTxt} \u2014 \ud83d\udd25 ${myStake}u to win ${myPayout}u`;
+  const slipLabel = `${myMarketTxt} \u2014 \ud83d\udd25 ${myStake}u to win ${myPayout}u`;
   card.appendChild(el('div', null, slipLabel)).style.cssText = 'font-size:12.5px;color:var(--text-dim);margin-bottom:8px;';
   const origNote = originalTermsNote(ch);
   if (origNote) card.appendChild(el('div', null, origNote)).style.cssText = 'font-size:10.5px;color:var(--text-faint);font-style:italic;margin-top:-4px;margin-bottom:8px;';
@@ -3408,6 +3408,9 @@ function renderChallengeRow(ch) {
     delBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
     delBtn.onclick = () => deleteChallenge(ch);
     card.appendChild(delBtn);
+  }
+  if (ch.status === 'accepted' && gameIndex[ch.gameId]) {
+    card.appendChild(renderCommentsSection(gameIndex[ch.gameId].game, gameIndex[ch.gameId].sport));
   }
   return card;
 }
@@ -4013,19 +4016,19 @@ function renderExistingChallenges() {
     if (challengeBrowseMode === 'cart') {
       return renderSwipeCart();
     }
-    return renderSwipeMode([toggle, leagueScroller, dateScroller, typeScroller, maxUnitsScroller]);
+    return renderSwipeMode([leagueScroller, dateScroller, typeScroller, maxUnitsScroller, toggle]);
   }
 
   const wrap = el('div');
-  wrap.appendChild(toggle);
   if (leagueScroller) wrap.appendChild(leagueScroller);
   wrap.appendChild(dateScroller);
   wrap.appendChild(typeScroller);
   wrap.appendChild(maxUnitsScroller);
+  wrap.appendChild(toggle);
 
   if (existingChallengeView === 'friends') {
     const friendsSubScroller = el('div', 'league-scroller');
-    [['global','Global'],['toyou','To You']].forEach(([id,label]) => {
+    [['global','To Everyone'],['toyou','To You']].forEach(([id,label]) => {
       const pill = el('button', 'league-pill' + (friendsSubFilter === id ? ' active' : ''), label);
       pill.style.position = 'relative';
       pill.onclick = () => { friendsSubFilter = id; swipeStackInitialized = false; render(); };
@@ -4052,7 +4055,7 @@ function renderExistingChallenges() {
     if (challengeBrowseMode === 'cart') {
       return renderSwipeCart();
     }
-    return renderSwipeMode([toggle, leagueScroller, dateScroller, typeScroller, maxUnitsScroller, friendsSubScroller]);
+    return renderSwipeMode([leagueScroller, dateScroller, typeScroller, maxUnitsScroller, toggle, friendsSubScroller]);
   }
 
   const mineGlobal = list.filter(ch => ch.visibility === 'public');
@@ -4164,7 +4167,8 @@ function renderCompletedChallenges() {
   banner.appendChild(c1);
   const c2 = el('div', 'rank-cell');
   c2.appendChild(el('div', 'rc-label', 'Units<br>won'));
-  c2.appendChild(el('div', 'rc-value', fmtUnits(unitsWonChallenges))).style.color = unitsWonChallenges >= 0 ? '#4CAF50' : 'var(--danger)';
+  const unitsWonRounded = Math.round(unitsWonChallenges);
+  c2.appendChild(el('div', 'rc-value', (unitsWonRounded > 0 ? '+' : '') + unitsWonRounded + 'u')).style.color = unitsWonChallenges >= 0 ? '#4CAF50' : 'var(--danger)';
   banner.appendChild(c2);
   const c3 = el('div', 'rank-cell');
   c3.appendChild(el('div', 'rc-label', 'Win<br>Percentage'));
