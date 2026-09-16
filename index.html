@@ -894,6 +894,7 @@ async function completeLoginSetup() {
       await migrateLegacyWeeklyPicks();
       await cleanupStaleHouseBets();
         await cleanupAcceptedChallengesOnce();
+        await cleanupAllOpenAndAcceptedChallengesOnce();
       if (!players.includes(profile.name)) { players.push(profile.name); await savePlayers(players); }
       await refreshGameLists();
       await topUpHouseChallenges();
@@ -3514,7 +3515,7 @@ function renderSwipeCard(ch) {
   const cardWrap = el('div');
   cardWrap.style.cssText = 'position:relative;touch-action:pan-y;user-select:none;display:flex;flex-direction:column;';
   const card = el('div', 'swipe-card-big');
-  card.style.cssText = 'padding:26px 28px;cursor:grab;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
+  card.style.cssText = 'padding:20px 28px;cursor:grab;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
   const marketTxt = challengeMarketTxt(ch);
   const leagueLabel = (LEAGUES_META.find(l => l.id === ch.sport) || {}).label || (ch.sport || 'sport').toUpperCase();
   const gTime = gameTimeLabel(ch.gameId);
@@ -3529,7 +3530,7 @@ function renderSwipeCard(ch) {
   card.appendChild(top);
 
   const logoRow = el('div');
-  logoRow.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:14px;margin:14px 0;';
+  logoRow.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:14px;margin:10px 0;';
   if (awayLogo || homeLogo) {
     const awayRec = teamRecord(ch.gameId, awayAbbr);
     const homeRec = teamRecord(ch.gameId, homeAbbr);
@@ -3558,12 +3559,10 @@ function renderSwipeCard(ch) {
   const origNote = originalTermsNote(ch);
   const mult = ch.oddsMultiplier || 1;
   const payoutUnits = Math.round(displayUnits * mult * 100) / 100;
-  const ratio = ratioLabel(mult);
   bottom.innerHTML = `
     <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">If you accept, you get</div>
-    <div style="font-size:19px;font-weight:800;color:#C1501F;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${marketTxt}</div>
-    <div style="font-size:14px;color:#3a3528;font-weight:700;">\ud83d\udd25 ${ratio}</div>
-    <div style="font-size:13px;color:#3a3528;font-weight:600;">${displayUnits} Unit${displayUnits === 1 ? '' : 's'} to win ${payoutUnits} Unit${payoutUnits === 1 ? '' : 's'}</div>
+    <div style="font-size:19px;font-weight:800;color:#C1501F;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${marketTxt}</div>
+    <div style="font-size:13px;color:#3a3528;font-weight:700;">\ud83d\udd25 ${displayUnits} Unit${displayUnits === 1 ? '' : 's'} to win ${payoutUnits} Unit${payoutUnits === 1 ? '' : 's'}</div>
     ${wasConverted ? `<div style="font-size:10px;color:#8a8168;margin-top:3px;">(matches ${ch.creator}'s ${ch.units}${ch.units === 1 ? 'u' : 'u'} stake in real dollars)</div>` : ''}
     ${origNote ? `<div style="font-size:10px;color:#8a8168;font-style:italic;margin-top:3px;">${origNote}</div>` : ''}
   `;
@@ -4952,6 +4951,16 @@ async function cleanupAcceptedChallengesOnce() {
   }
   try { localStorage.setItem(FLAG, '1'); } catch (e) {}
 }
+async function cleanupAllOpenAndAcceptedChallengesOnce() {
+  const FLAG = 'ww_cleanup_all_challenges_v1';
+  try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
+  const before = allPicks.length;
+  allPicks = allPicks.filter(p => !(p.poolType === 'challenge' && (p.status === 'open' || p.status === 'accepted')));
+  if (allPicks.length !== before) {
+    try { await savePicks(allPicks); } catch (e) { return; /* retry next load if save failed */ }
+  }
+  try { localStorage.setItem(FLAG, '1'); } catch (e) {}
+}
 function currentProfit(name) {
   return poolOnly(allPicks.filter(p => p.player === name)).reduce((s,p) => {
     const r = settlePick(p);
@@ -5432,6 +5441,7 @@ function renderLeaderboard() {
         await migrateLegacyWeeklyPicks();
         await cleanupStaleHouseBets();
         await cleanupAcceptedChallengesOnce();
+        await cleanupAllOpenAndAcceptedChallengesOnce();
         if (!players.includes(profile.name)) { players.push(profile.name); await savePlayers(players); }
         await refreshGameLists();
         await topUpHouseChallenges();
