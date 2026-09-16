@@ -3768,7 +3768,7 @@ function renderSwipeMode(extraRows) {
   const wrap = el('div');
   const headerEl = document.querySelector('header.top');
   const headerHeight = headerEl ? Math.ceil(headerEl.getBoundingClientRect().height) : 110;
-  wrap.style.cssText = `position:fixed;top:${headerHeight}px;left:0;right:0;bottom:76px;display:flex;flex-direction:column;padding:0 16px 10px;box-sizing:border-box;overflow:hidden;`;
+  wrap.style.cssText = `position:fixed;top:${headerHeight}px;left:0;right:0;bottom:76px;display:flex;flex-direction:column;padding:4px 16px 10px;box-sizing:border-box;overflow:hidden;`;
 
   (extraRows || []).forEach(row => { if (row) { row.style.flexShrink = '0'; wrap.appendChild(row); } });
 
