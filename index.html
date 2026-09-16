@@ -367,6 +367,7 @@ let commentVisibilityFilter = 'all'; // 'all' | 'public' | 'friends'
 let poolBuilderOpen = false;
 let poolsYourOpen = true;
 let poolsOpenOpen = true;
+let poolsCompletedOpen = true;
 let dailyHousePoolExpanded = false;
 let poolJoinTarget = null; // pool object currently being joined
 let poolJoinSides = {}; // gameId+betType -> sideAbbr
@@ -1998,7 +1999,7 @@ function renderPoolsSection() {
   if (poolBuilderOpen) { wrap.appendChild(renderPoolBuilder()); return wrap; }
 
   const allPools = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
-  const yourPools = allPools.filter(p => p.creator === profile.name);
+  const yourPools = allPools.filter(p => p.creator === profile.name && p.status !== 'settled');
   const friendNames = new Set((profile.friends || []).map(f => f.name));
   const openPools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && (
     p.visibility === 'public' || (p.visibility === 'friend' && friendNames.has(p.creator))
@@ -2032,6 +2033,16 @@ function renderPoolsSection() {
       openPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p)));
     }
   }
+
+  const completedPools = allPools.filter(p => p.status === 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
+  const completedHeader = el('div', 'week-header', `${poolsCompletedOpen ? '\u25be' : '\u25b8'} Completed Pools (${completedPools.length})`);
+  completedHeader.style.cursor = 'pointer';
+  completedHeader.onclick = () => { poolsCompletedOpen = !poolsCompletedOpen; render(); };
+  wrap.appendChild(completedHeader);
+  if (poolsCompletedOpen) {
+    if (!completedPools.length) { wrap.appendChild(el('div', 'empty', 'No completed pools yet.')); }
+    else { completedPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
+  }
   return wrap;
 }
 function renderDailyChallenge() {
@@ -2039,8 +2050,6 @@ function renderDailyChallenge() {
   const wk = houseDayKey(new Date());
   const remaining = weeklyRemaining(profile.name, wk);
   const myBets = weeklyBetsFor(profile.name, wk);
-  const unitsWon = totalUnitsWon(profile.name);
-  const streak = positiveStreak(profile.name);
 
   const banner = el('div', 'rank-banner');
   const b1 = el('div', 'rank-cell');
@@ -2048,16 +2057,6 @@ function renderDailyChallenge() {
   b1.appendChild(el('div', 'rc-value accent', remaining + ' / ' + HOUSE_BANK_TOTAL + 'u'));
   b1.appendChild(el('div', 'rc-sub', 'Resets daily'));
   banner.appendChild(b1);
-  const b2 = el('div', 'rank-cell');
-  b2.appendChild(el('div', 'rc-label', 'Units won'));
-  b2.appendChild(el('div', 'rc-value ' + (unitsWon >= 0 ? 'accent' : ''), fmtUnits(unitsWon)));
-  b2.appendChild(el('div', 'rc-sub', 'Running tally'));
-  banner.appendChild(b2);
-  const b3 = el('div', 'rank-cell');
-  b3.appendChild(el('div', 'rc-label', 'Positive streak'));
-  b3.appendChild(el('div', 'rc-value ' + (streak > 0 ? 'accent' : ''), streak + (streak === 1 ? ' day' : ' days')));
-  b3.appendChild(el('div', 'rc-sub', 'Days in a row up'));
-  banner.appendChild(b3);
   wrap.appendChild(banner);
 
   const historyToggle = el('button', null, dailyShowHistory ? '← Back to today' : 'Past days');
@@ -2886,6 +2885,12 @@ function renderPoolCard(pool) {
   const isCreator = pool.creator === profile.name;
   const participants = pool.participants || [];
   const myEntry = participants.find(p => p.name === profile.name);
+  if (pool.status === 'settled' && myEntry) {
+    const payout = (pool.payouts || []).find(po => po.name === profile.name);
+    const won = payout && payout.amount > 0;
+    card.style.borderColor = won ? '#4CAF50' : 'var(--danger)';
+    card.style.background = won ? 'rgba(76, 175, 80, 0.08)' : 'rgba(239, 59, 59, 0.08)';
+  }
   card.appendChild(el('div', null, pool.gameLabel)).style.cssText = 'font-size:13.5px;font-weight:700;margin-bottom:4px;';
   card.appendChild(el('div', null, `${pool.legs.length} games \u00b7 ${pool.buyInUnits}u buy-in \u00b7 ${pool.houseUnitsBudget} house units \u00b7 top ${pool.paidPositions} paid`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:6px;';
   card.appendChild(el('div', null, `Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${pool.visibility === 'public' ? '\ud83d\udce2 Public' : '\ud83d\udc64 Friends only'}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
@@ -3895,7 +3900,6 @@ function pendingFriendChallengesForMe() {
 }
 function renderExistingChallenges() {
   const toggle = el('div', 'league-scroller');
-  toggle.style.marginTop = '6px';
   [['global','Global'],['friends','Friends'],['mine','Mine']].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (existingChallengeView === id ? ' active' : ''), label);
     pill.style.position = 'relative';
