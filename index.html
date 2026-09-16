@@ -794,7 +794,13 @@ function renderMenu() {
   if (!profile) { balanceBtn.style.display = 'none'; }
   else {
     balanceBtn.style.display = '';
-    balanceBtn.textContent = '$' + accountBalanceFor(profile.name).toFixed(2);
+    const balDollars = accountBalanceFor(profile.name);
+    if (profile.unitSize) {
+      const unitsAvailable = Math.round((balDollars / profile.unitSize) * 100) / 100;
+      balanceBtn.textContent = unitsAvailable + ' \ud83e\ude99';
+    } else {
+      balanceBtn.textContent = '$' + balDollars.toFixed(2);
+    }
     balanceBtn.onclick = () => { appSection = 'account'; render(); };
   }
   const friendsBtn = document.getElementById('friendsBtn');
