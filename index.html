@@ -3093,7 +3093,7 @@ function renderGolfSection() {
   unitsInput.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
   row2.appendChild(unitsInput);
   const visSel = el('select');
-  visSel.style.cssText = 'flex:0 0 auto;width:104px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 4px;font-size:11px;box-sizing:border-box;';
+  visSel.style.cssText = 'flex:0 0 auto;width:125px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:10px 5px;font-size:13px;box-sizing:border-box;';
   const publicOpt = document.createElement('option'); publicOpt.value = ''; publicOpt.textContent = '\ud83d\udce2 Post publicly'; visSel.appendChild(publicOpt);
   (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel.appendChild(o); });
   row2.appendChild(visSel);
@@ -4306,7 +4306,7 @@ function renderGameCard(g, sport, meta) {
     unitsInput.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
     row2.appendChild(unitsInput);
     const visSel = el('select');
-    visSel.style.cssText = 'flex:0 0 auto;width:104px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 4px;font-size:11px;box-sizing:border-box;';
+    visSel.style.cssText = 'flex:0 0 auto;width:125px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:10px 5px;font-size:13px;box-sizing:border-box;';
     const publicOpt = document.createElement('option'); publicOpt.value = ''; publicOpt.textContent = '\ud83d\udce2 Post publicly'; visSel.appendChild(publicOpt);
     (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel.appendChild(o); });
     row2.appendChild(visSel);
@@ -4456,7 +4456,7 @@ function renderGameCard(g, sport, meta) {
     unitsInput2.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
     row2.appendChild(unitsInput2);
     const visSel2 = el('select');
-    visSel2.style.cssText = 'flex:0 0 auto;width:104px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 4px;font-size:11px;box-sizing:border-box;';
+    visSel2.style.cssText = 'flex:0 0 auto;width:125px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:10px 5px;font-size:13px;box-sizing:border-box;';
     const publicOpt2 = document.createElement('option'); publicOpt2.value = ''; publicOpt2.textContent = '\ud83d\udce2 Post publicly'; visSel2.appendChild(publicOpt2);
     (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel2.appendChild(o); });
     row2.appendChild(visSel2);
