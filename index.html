@@ -1248,8 +1248,8 @@ function renderFriendsScreen() {
       const addBtn = el('button', null, isFriend ? '\u2713 Added' : (pendingOut ? 'Requested' : '+ Add'));
       addBtn.disabled = isFriend || pendingOut;
       addBtn.style.cssText = (isFriend || pendingOut)
-        ? 'background:none;border:1px solid #4CAF50;color:#4CAF50;border-radius:6px;padding:7px 12px;font-size:12px;font-weight:700;'
-        : 'background:var(--accent-dark);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:7px 12px;font-size:12px;font-weight:700;';
+        ? 'flex:0 0 auto;background:none;border:1px solid #4CAF50;color:#4CAF50;border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;'
+        : 'flex:0 0 auto;background:var(--accent-dark);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;';
       addBtn.onclick = async () => {
         addBtn.disabled = true; addBtn.textContent = 'Sending…';
         const request = {
