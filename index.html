@@ -895,9 +895,10 @@ async function completeLoginSetup() {
       await cleanupStaleHouseBets();
         await cleanupAcceptedChallengesOnce();
         await cleanupAllOpenAndAcceptedChallengesOnce();
+        await cleanupHouseChallengesOnce();
       if (!players.includes(profile.name)) { players.push(profile.name); await savePlayers(players); }
       await refreshGameLists();
-      await topUpHouseChallenges();
+
       startPolling();
       startLiveScoreChecks();
       render();
@@ -4951,6 +4952,16 @@ async function cleanupAcceptedChallengesOnce() {
   }
   try { localStorage.setItem(FLAG, '1'); } catch (e) {}
 }
+async function cleanupHouseChallengesOnce() {
+  const FLAG = 'ww_cleanup_house_challenges_v1';
+  try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
+  const before = allPicks.length;
+  allPicks = allPicks.filter(p => !(p.poolType === 'challenge' && p.creator === 'House'));
+  if (allPicks.length !== before) {
+    try { await savePicks(allPicks); } catch (e) { return; /* retry next load if save failed */ }
+  }
+  try { localStorage.setItem(FLAG, '1'); } catch (e) {}
+}
 async function cleanupAllOpenAndAcceptedChallengesOnce() {
   const FLAG = 'ww_cleanup_all_challenges_v1';
   try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
@@ -5442,9 +5453,10 @@ function renderLeaderboard() {
         await cleanupStaleHouseBets();
         await cleanupAcceptedChallengesOnce();
         await cleanupAllOpenAndAcceptedChallengesOnce();
+        await cleanupHouseChallengesOnce();
         if (!players.includes(profile.name)) { players.push(profile.name); await savePlayers(players); }
         await refreshGameLists();
-        await topUpHouseChallenges();
+
         startPolling();
         startLiveScoreChecks();
         render();
