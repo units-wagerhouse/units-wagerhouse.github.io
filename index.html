@@ -371,6 +371,25 @@ let dailyHousePoolExpanded = false;
 let poolJoinTarget = null; // pool object currently being joined
 let poolJoinSides = {}; // gameId+betType -> sideAbbr
 let poolJoinUnits = {}; // gameId+betType -> confidence units
+let seenAcceptedIds = null; // lazy-loaded Set from localStorage
+function getSeenAcceptedIds() {
+  if (seenAcceptedIds) return seenAcceptedIds;
+  try { seenAcceptedIds = new Set(JSON.parse(localStorage.getItem('ww_seen_accepted') || '[]')); }
+  catch (e) { seenAcceptedIds = new Set(); }
+  return seenAcceptedIds;
+}
+function newlyAcceptedChallengesForMe() {
+  const seen = getSeenAcceptedIds();
+  return allPicks.filter(p => p.poolType === 'challenge' && p.creator === profile.name && p.status === 'accepted' && !seen.has(p.id));
+}
+function markAcceptedChallengesSeen() {
+  const seen = getSeenAcceptedIds();
+  let changed = false;
+  allPicks.filter(p => p.poolType === 'challenge' && p.creator === profile.name && p.status === 'accepted').forEach(p => {
+    if (!seen.has(p.id)) { seen.add(p.id); changed = true; }
+  });
+  if (changed) { try { localStorage.setItem('ww_seen_accepted', JSON.stringify([...seen])); } catch (e) {} }
+}
 let poolBuilderLegs = []; // [{sport, gameId, gameLabel, betType, sideAbbr, line, spreadLabel, displayText}]
 let openChallengeMaxUnits = null; // null = no cap
 let challengeTypeSelection = {}; // gameId -> 'spread' | 'total' | 'playerprop'
@@ -480,6 +499,7 @@ function authHeader() {
   return session && session.idToken ? { 'Authorization': 'Bearer ' + session.idToken } : {};
 }
 async function fsGet() {
+  await ensureFreshSession();
   const res = await fetch(`${FS_DOC}?key=${firebaseConfig.apiKey}`, { headers: authHeader() });
   if (res.status === 404) return {};
   if (!res.ok) { const t = await res.text().catch(()=>''); throw new Error('Firestore GET ' + res.status + ': ' + t.slice(0,150)); }
@@ -487,6 +507,7 @@ async function fsGet() {
   return fromFsFields(json.fields);
 }
 async function fsPatch(partial) {
+  await ensureFreshSession();
   const fields = toFsFields(partial);
   const params = new URLSearchParams();
   params.append('key', firebaseConfig.apiKey);
@@ -617,6 +638,7 @@ async function ensureFreshSession() {
   } catch (e) { clearSession(); return false; }
 }
 async function fetchProfileDoc(uid) {
+  await ensureFreshSession();
   const res = await fetch(`${PROFILES_BASE}/${uid}?key=${firebaseConfig.apiKey}`, { headers: authHeader() });
   if (res.status === 404) return null;
   if (!res.ok) { const t = await res.text().catch(()=>''); throw new Error('Firestore GET ' + res.status + ': ' + t.slice(0,150)); }
@@ -624,6 +646,7 @@ async function fetchProfileDoc(uid) {
   return fromFsFields(json.fields);
 }
 async function saveProfileDoc(uid, data) {
+  await ensureFreshSession();
   const fields = toFsFields(data);
   const params = new URLSearchParams();
   params.append('key', firebaseConfig.apiKey);
@@ -637,6 +660,7 @@ async function saveProfileDoc(uid, data) {
   return res.json();
 }
 async function deleteProfileDoc(uid) {
+  await ensureFreshSession();
   const res = await fetch(`${PROFILES_BASE}/${uid}?key=${firebaseConfig.apiKey}`, {
     method: 'DELETE',
     headers: authHeader()
@@ -648,6 +672,7 @@ let allProfilesCache = null;
 async function fetchAllProfiles(forceRefresh) {
   if (!forceRefresh && allProfilesCache) return allProfilesCache;
   try {
+    await ensureFreshSession();
     const res = await fetch(`${PROFILES_BASE}?key=${firebaseConfig.apiKey}&pageSize=300`, { headers: authHeader() });
     if (!res.ok) return allProfilesCache || [];
     const json = await res.json();
@@ -878,7 +903,12 @@ function renderTabs() {
   if (!profile) return;
   [['existing','Open'],['games','Create'],['completed','Accepted']].forEach(([id,label]) => {
     const t = el('div', 'tab' + (activeTab === id ? ' active' : ''), label);
-    t.onclick = () => { activeTab = id; render(); };
+    t.style.position = 'relative';
+    t.onclick = () => { activeTab = id; if (id === 'completed') markAcceptedChallengesSeen(); render(); };
+    if (id === 'completed' && newlyAcceptedChallengesForMe().length > 0) {
+      const dot = el('span'); dot.style.cssText = 'position:absolute;top:4px;right:10px;width:8px;height:8px;border-radius:50%;background:#3B82F6;';
+      t.appendChild(dot);
+    }
     bar.appendChild(t);
   });
 }
@@ -937,12 +967,6 @@ function renderProfileScreen() {
   card.appendChild(emailInput);
   card.appendChild(el('div', 'setup-hint', "Needed for \"Forgot username or password\" at login. Adding or changing this updates your real recovery email."));
 
-  card.appendChild(el('label', null, 'Unit size ($)'));
-  const unitSizeInput = el('input'); unitSizeInput.type = 'number'; unitSizeInput.min = '0'; unitSizeInput.step = '0.5';
-  unitSizeInput.value = profile.unitSize || ''; unitSizeInput.placeholder = 'e.g. 5';
-  card.appendChild(unitSizeInput);
-  card.appendChild(el('div', 'setup-hint', "Set what one unit is worth in real dollars. This does two things: your Account balance automatically adjusts by units won or lost \u00d7 this amount, and when you're about to accept someone else's challenge, the unit cost shown to you is converted to match their real-dollar stake exactly \u2014 so if their unit size is bigger or smaller than yours, you'll see a different unit number than they posted, not the same number at a different value."));
-
   const saveErr = el('div', 'pick-error');
   const saveBtn = el('button', 'lock-btn', 'Save changes');
   saveBtn.style.marginTop = '12px';
@@ -956,10 +980,9 @@ function renderProfileScreen() {
     saveErr.textContent = '';
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const email = emailInput.value.trim() || null;
-    const unitSize = unitSizeInput.value ? parseFloat(unitSizeInput.value) : null;
     const oldName = profile.name;
     try {
-      const updates = { name, unitSize, email };
+      const updates = { name, email };
       if (email && email !== profile.email) {
         try {
           await ensureFreshSession();
@@ -1078,6 +1101,34 @@ function renderAccountScreen() {
   c1.appendChild(el('div', 'rc-value accent', '$' + balance.toFixed(2)));
   banner.appendChild(c1);
   wrap.appendChild(banner);
+
+  const unitCard = el('div', 'setup-card');
+  unitCard.style.marginTop = '14px';
+  unitCard.appendChild(el('div', null, 'Unit size ($)')).style.cssText = 'font-size:16px;font-weight:800;margin-bottom:4px;';
+  unitCard.appendChild(el('div', 'setup-hint', "Set what one unit is worth in real dollars. This does two things: your Account balance automatically adjusts by units won or lost \u00d7 this amount, and when you're about to accept someone else's challenge, the unit cost shown to you is converted to match their real-dollar stake exactly \u2014 so if their unit size is bigger or smaller than yours, you'll see a different unit number than they posted, not the same number at a different value."));
+  const unitSizeInput = el('input'); unitSizeInput.type = 'number'; unitSizeInput.min = '0'; unitSizeInput.step = '0.5';
+  unitSizeInput.value = profile.unitSize || ''; unitSizeInput.placeholder = 'e.g. 5';
+  unitCard.appendChild(unitSizeInput);
+  const unitErr = el('div', 'pick-error');
+  const unitSaveBtn = el('button', 'lock-btn', 'Save unit size');
+  unitSaveBtn.style.marginTop = '10px';
+  unitCard.appendChild(unitSaveBtn);
+  unitCard.appendChild(unitErr);
+  wrap.appendChild(unitCard);
+
+  unitSaveBtn.onclick = async () => {
+    const unitSize = unitSizeInput.value ? parseFloat(unitSizeInput.value) : null;
+    unitErr.textContent = '';
+    unitSaveBtn.disabled = true; unitSaveBtn.textContent = 'Saving…';
+    try {
+      await saveProfileDoc(profile.uid, { unitSize });
+      saveProfile({ ...profile, unitSize });
+      render();
+    } catch (e) {
+      unitErr.textContent = "Couldn't save (" + describeFetchError(e) + ") — try again.";
+      unitSaveBtn.disabled = false; unitSaveBtn.textContent = 'Save unit size';
+    }
+  };
 
   const card = el('div', 'setup-card');
   card.style.marginTop = '14px';
@@ -1223,6 +1274,20 @@ function renderFriendsScreen() {
       };
       btnRow.appendChild(acceptBtn); btnRow.appendChild(declineBtn);
       row.appendChild(btnRow);
+      wrap.appendChild(row);
+    });
+  }
+
+  // ---- outgoing pending requests ----
+  const outgoing = allPicks.filter(p => p.poolType === 'friendRequest' && p.status === 'pending' && p.fromUid === profile.uid);
+  if (outgoing.length) {
+    wrap.appendChild(el('div', 'week-header', `Requested (${outgoing.length})`));
+    outgoing.forEach(req => {
+      const row = el('div', 'pick-row');
+      const left = el('div');
+      left.appendChild(el('div', 'who', req.toName));
+      left.appendChild(el('div', 'detail', '@' + req.toUsername + ' \u2014 waiting for them to accept'));
+      row.appendChild(left);
       wrap.appendChild(row);
     });
   }
@@ -3099,7 +3164,7 @@ function renderGolfSection() {
   unitsInput.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
   row2.appendChild(unitsInput);
   const visSel = el('select');
-  visSel.style.cssText = 'flex:0 0 auto;width:112px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
+  visSel.style.cssText = 'flex:0 0 auto;width:134px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
   const publicOpt = document.createElement('option'); publicOpt.value = ''; publicOpt.textContent = '\ud83d\udce2 Post publicly'; visSel.appendChild(publicOpt);
   (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel.appendChild(o); });
   row2.appendChild(visSel);
@@ -3135,11 +3200,14 @@ function renderGolfSection() {
     };
     createBtn.disabled = true; createBtn.textContent = 'Saving…';
     allPicks.push(challenge);
+    const reserveTx = reserveChallengeStake(challenge, 'creator', challenge.units);
+    if (reserveTx) allPicks.push(reserveTx);
     try {
       await savePicks(allPicks);
       render();
     } catch (e) {
       allPicks.pop();
+      if (reserveTx) allPicks.pop();
       createBtn.disabled = false; createBtn.textContent = 'Submit Challenge';
       errEl.textContent = "Couldn't save (" + describeFetchError(e) + ") — try again.";
     }
@@ -3149,6 +3217,24 @@ function renderGolfSection() {
 
 function myChallengeFor(gameId, betType) {
   return allPicks.find(p => p.poolType === 'challenge' && p.creator === profile.name && p.gameId === gameId && p.betType === betType && p.status === 'open');
+}
+function opponentSideView(ch) {
+  const flipped = { ...ch };
+  if (ch.propType === 'golf_h2h') {
+    flipped.sideAbbr = ch.sideAbbr === ch.playerA ? ch.playerB : ch.playerA;
+  } else if (ch.betType === 'total' || ch.propType === 'player') {
+    flipped.sideAbbr = ch.sideAbbr === 'OVER' ? 'UNDER' : 'OVER';
+  } else {
+    const idx = gameIndex[ch.gameId];
+    if (idx && idx.game) {
+      flipped.sideAbbr = ch.sideAbbr === idx.game.home ? idx.game.away : idx.game.home;
+    }
+    if (ch.betType === 'spread' && ch.line !== null && ch.line !== undefined) {
+      flipped.line = -ch.line;
+      flipped.spreadLabel = ch.spreadLabel === 'PK' ? 'PK' : (ch.line < 0 ? '+' + Math.abs(ch.line) : '-' + Math.abs(ch.line));
+    }
+  }
+  return challengeMarketTxt(flipped);
 }
 function challengeStatusText(ch) {
   if (ch.status === 'open') return ch.visibility === 'public' ? 'waiting for someone to accept' : `Sent to ${ch.targetFriend} — waiting for them to accept`;
@@ -3237,7 +3323,17 @@ function challengeMarketTxt(ch) {
 
 function renderChallengeRow(ch) {
   const card = el('div', 'event-card');
-  if (ch.status === 'accepted') card.style.borderColor = '#4CAF50';
+  if (ch.status === 'accepted') {
+    const settleResult = settlePick(ch);
+    if (settleResult.status === 'pending') {
+      card.style.borderColor = ch.visibility === 'friend' ? '#3B82F6' : '#FF9800'; // blue = friend challenge, orange = global
+    } else {
+      const outcome = myChallengeOutcome(ch);
+      card.style.borderColor = outcome === 'win' ? '#4CAF50' : (outcome === 'loss' ? 'var(--danger)' : 'var(--text-faint)');
+      if (outcome === 'win') card.style.background = 'rgba(76, 175, 80, 0.08)';
+      else if (outcome === 'loss') card.style.background = 'rgba(239, 59, 59, 0.08)';
+    }
+  }
   else if (ch.status === 'open') card.style.borderColor = 'var(--text-faint)';
   const postedDate = new Date(ch.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   card.appendChild(el('div', null, fullGameLabel(ch))).style.cssText = 'font-size:13.5px;font-weight:700;margin-bottom:2px;';
@@ -3250,7 +3346,8 @@ function renderChallengeRow(ch) {
   const myStake = isMine ? ch.units : displayUnitsFor(ch);
   const myPayout = isMine ? ch.units : Math.round(displayUnitsFor(ch) * mult * 100) / 100;
   const myRatio = isMine ? '1:1' : ratioLabel(mult);
-  const slipLabel = `${isMine ? "You're offering" : 'Take'}: ${marketTxt} \u2014 \ud83d\udd25 ${myRatio}, ${myStake}u to win ${myPayout}u`;
+  const myMarketTxt = isMine ? opponentSideView(ch) : marketTxt;
+  const slipLabel = `${isMine ? 'Your side' : 'Take'}: ${myMarketTxt} \u2014 \ud83d\udd25 ${myStake}u to win ${myPayout}u`;
   card.appendChild(el('div', null, slipLabel)).style.cssText = 'font-size:12.5px;color:var(--text-dim);margin-bottom:8px;';
   const origNote = originalTermsNote(ch);
   if (origNote) card.appendChild(el('div', null, origNote)).style.cssText = 'font-size:10.5px;color:var(--text-faint);font-style:italic;margin-top:-4px;margin-bottom:8px;';
@@ -3418,12 +3515,24 @@ function renderCounterForm(ch) {
 
 async function deleteChallenge(ch) {
   if (ch.status !== 'open') return; // can only withdraw a challenge before someone accepts it
-  if (!confirm('Delete this challenge permanently?')) return;
+  if (!confirm('Delete this challenge permanently? Your reserved stake will be refunded.')) return;
   const idx = allPicks.findIndex(p => p.id === ch.id);
   if (idx === -1) return;
   const removed = allPicks.splice(idx, 1)[0];
+  let refundTx = null;
+  if (profile.unitSize) {
+    refundTx = {
+      id: profile.name + '_accounttx_refund_' + ch.id,
+      poolType: 'accountTx', player: profile.name,
+      type: 'deposit', amount: ch.units * profile.unitSize,
+      note: `Stake refunded \u2014 ${challengeMarketTxt(ch)}`,
+      relatedChallengeId: ch.id,
+      timestamp: new Date().toISOString()
+    };
+    allPicks.push(refundTx);
+  }
   try { await savePicks(allPicks); render(); }
-  catch (e) { allPicks.splice(idx, 0, removed); alert("Couldn't delete (" + describeFetchError(e) + ") — try again."); }
+  catch (e) { allPicks.splice(idx, 0, removed); if (refundTx) allPicks.pop(); alert("Couldn't delete (" + describeFetchError(e) + ") — try again."); }
 }
 
 function generateHouseChallenges(limit) {
@@ -3514,8 +3623,20 @@ async function declineChallenge(ch) {
   if (idx === -1) return;
   const prev = { ...allPicks[idx] };
   allPicks[idx].status = 'declined';
+  let refundTx = null;
+  if (ch.creatorUnitSize) {
+    refundTx = {
+      id: ch.creator + '_accounttx_refund_' + ch.id,
+      poolType: 'accountTx', player: ch.creator,
+      type: 'deposit', amount: ch.units * ch.creatorUnitSize,
+      note: `Stake refunded \u2014 declined`,
+      relatedChallengeId: ch.id,
+      timestamp: new Date().toISOString()
+    };
+    allPicks.push(refundTx);
+  }
   try { await savePicks(allPicks); render(); }
-  catch (e) { allPicks[idx] = prev; alert("Couldn't decline (" + describeFetchError(e) + ") — try again."); render(); }
+  catch (e) { allPicks[idx] = prev; if (refundTx) allPicks.pop(); alert("Couldn't decline (" + describeFetchError(e) + ") — try again."); render(); }
 }
 
 function renderSwipeCard(ch) {
@@ -3566,14 +3687,16 @@ function renderSwipeCard(ch) {
   const origNote = originalTermsNote(ch);
   const mult = ch.oddsMultiplier || 1;
   const payoutUnits = Math.round(displayUnits * mult * 100) / 100;
+  const marketTxtId = 'swipe-market-' + ch.id.replace(/[^a-zA-Z0-9]/g, '');
   bottom.innerHTML = `
     <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">If you accept, you get</div>
-    <div style="font-size:19px;font-weight:800;color:#C1501F;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${marketTxt}</div>
+    <div id="${marketTxtId}" style="font-size:19px;font-weight:800;color:#C1501F;margin-bottom:4px;white-space:nowrap;overflow:hidden;">${marketTxt}</div>
     <div style="font-size:13px;color:#3a3528;font-weight:700;">\ud83d\udd25 ${displayUnits} Unit${displayUnits === 1 ? '' : 's'} to win ${payoutUnits} Unit${payoutUnits === 1 ? '' : 's'}</div>
     ${wasConverted ? `<div style="font-size:10px;color:#8a8168;margin-top:3px;">(matches ${ch.creator}'s ${ch.units}${ch.units === 1 ? 'u' : 'u'} stake in real dollars)</div>` : ''}
     ${origNote ? `<div style="font-size:10px;color:#8a8168;font-style:italic;margin-top:3px;">${origNote}</div>` : ''}
   `;
   card.appendChild(bottom);
+  setTimeout(() => { const el2 = document.getElementById(marketTxtId); if (el2) shrinkTextToFit(el2, 12); }, 0);
 
   const stampAccept = el('div', null, 'ACCEPT');
   stampAccept.style.cssText = 'position:absolute;top:16px;left:16px;border:3px solid #2E7D32;color:#2E7D32;padding:3px 10px;font-weight:900;font-size:16px;border-radius:6px;transform:rotate(-15deg);opacity:0;pointer-events:none;';
@@ -3711,8 +3834,7 @@ function renderSwipeCart() {
   const totalCartUnits = swipeCart.reduce((s,ch) => s + convertedUnitsForViewer(ch), 0);
   const confirmLabel = (n, u) => {
     const base = `Confirm ${n} Challenge${n === 1 ? '' : 's'}`;
-    if (profile.unitSize) return `${base} (Cost = $${(u * profile.unitSize).toFixed(2)})`;
-    return `${base} (Total ${u} Unit${u === 1 ? '' : 's'})`;
+    return `${base} (Total Cost = ${u} Unit${u === 1 ? '' : 's'})`;
   };
   const confirmBtn = el('button', 'lock-btn', confirmLabel(swipeCart.length, totalCartUnits));
   confirmBtn.style.marginTop = '12px';
@@ -3755,12 +3877,20 @@ function renderSwipeCart() {
   return wrap;
 }
 
+function pendingFriendChallengesForMe() {
+  return allPicks.filter(p => p.poolType === 'challenge' && p.visibility === 'friend' && p.targetFriend === profile.name && p.status === 'open');
+}
 function renderExistingChallenges() {
   const toggle = el('div', 'league-scroller');
   toggle.style.marginTop = '6px';
   [['global','Global'],['friends','Friends'],['mine','Mine']].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (existingChallengeView === id ? ' active' : ''), label);
+    pill.style.position = 'relative';
     pill.onclick = () => { existingChallengeView = id; challengeBrowseMode = 'swipe'; swipeStackInitialized = false; openChallengeLeague = null; render(); };
+    if (id === 'friends' && pendingFriendChallengesForMe().length > 0) {
+      const dot = el('span'); dot.style.cssText = 'position:absolute;top:2px;right:4px;width:8px;height:8px;border-radius:50%;background:#3B82F6;';
+      pill.appendChild(dot);
+    }
     toggle.appendChild(pill);
   });
 
@@ -3779,19 +3909,20 @@ function renderExistingChallenges() {
     byView = all.filter(ch => ch.creator === profile.name && stillActive(ch));
   }
 
-  let leagueScroller = null;
-  const leaguesPresent = [...new Set(byView.map(ch => ch.sport).filter(Boolean))];
-  if (leaguesPresent.length > 1) {
-    leagueScroller = el('div', 'league-scroller');
-    const allPill = el('button', 'league-pill' + (openChallengeLeague === null ? ' active' : ''), 'All leagues');
-    allPill.onclick = () => { openChallengeLeague = null; swipeStackInitialized = false; render(); };
-    leagueScroller.appendChild(allPill);
-    leaguesPresent.forEach(sport => {
-      const label = (LEAGUES_META.find(l => l.id === sport) || {}).label || (sport || 'sport').toUpperCase();
-      const pill = el('button', 'league-pill' + (openChallengeLeague === sport ? ' active' : ''), label);
-      pill.onclick = () => { openChallengeLeague = sport; swipeStackInitialized = false; render(); };
-      leagueScroller.appendChild(pill);
-    });
+  let leagueScroller = el('div', 'league-scroller');
+  const allPill = el('button', 'league-pill' + (openChallengeLeague === null ? ' active' : ''), 'All leagues');
+  allPill.onclick = () => { openChallengeLeague = null; swipeStackInitialized = false; render(); };
+  leagueScroller.appendChild(allPill);
+  LEAGUES_META.filter(l => l.active && !l.isGolf).forEach(lg => {
+    const pill = el('button', 'league-pill' + (openChallengeLeague === lg.id ? ' active' : ''), lg.label);
+    pill.onclick = () => { openChallengeLeague = lg.id; swipeStackInitialized = false; render(); };
+    leagueScroller.appendChild(pill);
+  });
+  const golfMeta = LEAGUES_META.find(l => l.isGolf);
+  if (golfMeta) {
+    const pill = el('button', 'league-pill' + (openChallengeLeague === golfMeta.id ? ' active' : ''), golfMeta.label);
+    pill.onclick = () => { openChallengeLeague = golfMeta.id; swipeStackInitialized = false; render(); };
+    leagueScroller.appendChild(pill);
   }
 
   const dateScroller = el('div', 'league-scroller');
@@ -3896,7 +4027,12 @@ function renderExistingChallenges() {
     const friendsSubScroller = el('div', 'league-scroller');
     [['global','Global'],['toyou','To You']].forEach(([id,label]) => {
       const pill = el('button', 'league-pill' + (friendsSubFilter === id ? ' active' : ''), label);
+      pill.style.position = 'relative';
       pill.onclick = () => { friendsSubFilter = id; swipeStackInitialized = false; render(); };
+      if (id === 'toyou' && pendingFriendChallengesForMe().length > 0) {
+        const dot = el('span'); dot.style.cssText = 'position:absolute;top:2px;right:4px;width:8px;height:8px;border-radius:50%;background:#3B82F6;';
+        pill.appendChild(dot);
+      }
       friendsSubScroller.appendChild(pill);
     });
 
@@ -4312,7 +4448,7 @@ function renderGameCard(g, sport, meta) {
     unitsInput.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
     row2.appendChild(unitsInput);
     const visSel = el('select');
-    visSel.style.cssText = 'flex:0 0 auto;width:112px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
+    visSel.style.cssText = 'flex:0 0 auto;width:134px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
     const publicOpt = document.createElement('option'); publicOpt.value = ''; publicOpt.textContent = '\ud83d\udce2 Post publicly'; visSel.appendChild(publicOpt);
     (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel.appendChild(o); });
     row2.appendChild(visSel);
@@ -4372,6 +4508,8 @@ function renderGameCard(g, sport, meta) {
       };
       createBtn.disabled = true; createBtn.textContent = 'Saving…';
       allPicks.push(challenge);
+      const reserveTx = reserveChallengeStake(challenge, 'creator', challenge.units);
+      if (reserveTx) allPicks.push(reserveTx);
       let lastErr = null;
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
@@ -4382,6 +4520,7 @@ function renderGameCard(g, sport, meta) {
       }
       if (lastErr) {
         allPicks.pop();
+        if (reserveTx) allPicks.pop();
         createBtn.disabled = false; createBtn.textContent = 'Submit Challenge';
         errEl.textContent = "Couldn't save (" + describeFetchError(lastErr) + ") — try again.";
       } else {
@@ -4462,7 +4601,7 @@ function renderGameCard(g, sport, meta) {
     unitsInput2.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
     row2.appendChild(unitsInput2);
     const visSel2 = el('select');
-    visSel2.style.cssText = 'flex:0 0 auto;width:112px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
+    visSel2.style.cssText = 'flex:0 0 auto;width:134px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
     const publicOpt2 = document.createElement('option'); publicOpt2.value = ''; publicOpt2.textContent = '\ud83d\udce2 Post publicly'; visSel2.appendChild(publicOpt2);
     (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel2.appendChild(o); });
     row2.appendChild(visSel2);
@@ -4501,11 +4640,14 @@ function renderGameCard(g, sport, meta) {
       };
       createBtn2.disabled = true; createBtn2.textContent = 'Saving…';
       allPicks.push(challenge);
+      const reserveTx = reserveChallengeStake(challenge, 'creator', challenge.units);
+      if (reserveTx) allPicks.push(reserveTx);
       try {
         await savePicks(allPicks);
         render();
       } catch (e) {
         allPicks.pop();
+        if (reserveTx) allPicks.pop();
         createBtn2.disabled = false; createBtn2.textContent = 'Submit Challenge';
         errEl2.textContent = "Couldn't save (" + describeFetchError(e) + ") — try again.";
       }
