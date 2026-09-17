@@ -37,7 +37,7 @@
   .menu-dropdown .menu-item.danger { color: var(--danger); }
   .menu-dropdown .menu-item .sub { display: block; font-size: 11px; color: var(--text-faint); font-weight: 500; margin-top: 2px; }
   .swipe-card-big { display: flex; flex-direction: column; justify-content: center; overflow-y: auto; overflow-x: hidden; max-width: 100%; width: 100%; flex: 1; min-height: 0; box-sizing: border-box; }
-  .swipe-team-logo { width: 80px; height: 80px; object-fit: contain; }
+  .swipe-team-logo { width: 56px; height: 56px; object-fit: contain; }
   .swipe-fixed-bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: 1px solid var(--border); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); display: flex; gap: 10px; z-index: 25; box-sizing: border-box; }
   .swipe-bar-spacer { height: 76px; }
 
@@ -3936,7 +3936,7 @@ function renderSwipeCard(ch) {
   const cardWrap = el('div');
   cardWrap.style.cssText = 'position:relative;touch-action:pan-y;user-select:none;display:flex;flex-direction:column;';
   const card = el('div', 'swipe-card-big');
-  card.style.cssText = 'padding:20px 28px;cursor:grab;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
+  card.style.cssText = 'padding:14px 24px;cursor:grab;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
   const marketTxt = challengeMarketTxt(ch);
   const leagueLabel = (LEAGUES_META.find(l => l.id === ch.sport) || {}).label || (ch.sport || 'sport').toUpperCase();
   const gTime = gameTimeLabel(ch.gameId);
@@ -3951,21 +3951,21 @@ function renderSwipeCard(ch) {
   card.appendChild(top);
 
   const logoRow = el('div');
-  logoRow.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:14px;margin:10px 0;';
+  logoRow.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:14px;margin:6px 0;';
   if (awayLogo || homeLogo) {
     const awayRec = teamRecord(ch.gameId, awayAbbr);
     const homeRec = teamRecord(ch.gameId, homeAbbr);
     const awayCol = el('div'); awayCol.style.cssText = 'text-align:center;flex:1;min-width:0;';
     if (awayLogo) { const im = el('img'); im.src = awayLogo; im.className = 'swipe-team-logo'; awayCol.appendChild(im); }
     const awayNameEl = awayCol.appendChild(el('div', 'swipe-team-name', fullTeamName(ch.gameId, awayAbbr)));
-    awayNameEl.style.cssText = 'font-size:11.5px;font-weight:800;margin-top:4px;color:#1a1a1a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    awayNameEl.style.cssText = 'font-size:11px;font-weight:800;margin-top:2px;color:#1a1a1a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     if (awayRec) awayCol.appendChild(el('div', null, awayRec)).style.cssText = 'font-size:10px;font-weight:600;color:#8a8168;';
     logoRow.appendChild(awayCol);
     logoRow.appendChild(el('div', null, '@')).style.cssText = 'font-size:13px;color:#8a8168;font-weight:700;';
     const homeCol = el('div'); homeCol.style.cssText = 'text-align:center;flex:1;min-width:0;';
     if (homeLogo) { const im2 = el('img'); im2.src = homeLogo; im2.className = 'swipe-team-logo'; homeCol.appendChild(im2); }
     const homeNameEl = homeCol.appendChild(el('div', 'swipe-team-name', fullTeamName(ch.gameId, homeAbbr)));
-    homeNameEl.style.cssText = 'font-size:11.5px;font-weight:800;margin-top:4px;color:#1a1a1a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    homeNameEl.style.cssText = 'font-size:11px;font-weight:800;margin-top:2px;color:#1a1a1a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     if (homeRec) homeCol.appendChild(el('div', null, homeRec)).style.cssText = 'font-size:10px;font-weight:600;color:#8a8168;';
     logoRow.appendChild(homeCol);
   } else {
@@ -3983,7 +3983,7 @@ function renderSwipeCard(ch) {
   const marketTxtId = 'swipe-market-' + ch.id.replace(/[^a-zA-Z0-9]/g, '');
   bottom.innerHTML = `
     <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">If you accept, you get</div>
-    <div id="${marketTxtId}" style="font-size:19px;font-weight:800;color:#C1501F;margin-bottom:4px;white-space:nowrap;overflow:hidden;">${marketTxt}</div>
+    <div id="${marketTxtId}" style="font-size:17px;font-weight:800;color:#C1501F;margin-bottom:3px;white-space:nowrap;overflow:hidden;">${marketTxt}</div>
     <div style="font-size:13px;color:#3a3528;font-weight:700;">\ud83d\udd25 ${displayUnits} Unit${displayUnits === 1 ? '' : 's'} to win ${payoutUnits} Unit${payoutUnits === 1 ? '' : 's'}</div>
     ${wasConverted ? `<div style="font-size:10px;color:#8a8168;margin-top:3px;">(matches ${ch.creator}'s ${ch.units}${ch.units === 1 ? 'u' : 'u'} stake in real dollars)</div>` : ''}
     ${origNote ? `<div style="font-size:10px;color:#8a8168;font-style:italic;margin-top:3px;">${origNote}</div>` : ''}
