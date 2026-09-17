@@ -2262,18 +2262,18 @@ function renderPoolsSection() {
   if (poolBuilderOpen) { wrap.appendChild(renderPoolBuilder()); return wrap; }
 
   const allPools = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
-  const yourPools = allPools.filter(p => p.creator === profile.name && p.status !== 'settled');
+  const yourPools = allPools.filter(p => p.status !== 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
   const friendNames = new Set((profile.friends || []).map(f => f.name));
-  const openPools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && (
+  const openPools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
     p.visibility === 'public' || (p.visibility === 'friend' && friendNames.has(p.creator)) || isMyGroupChallenge(p)
   ));
 
-  const yourHeader = el('div', 'week-header', `${poolsYourOpen ? '\u25be' : '\u25b8'} Your Pools (${yourPools.length})`);
+  const yourHeader = el('div', 'week-header', `${poolsYourOpen ? '\u25be' : '\u25b8'} My Pools (${yourPools.length})`);
   yourHeader.style.cursor = 'pointer';
   yourHeader.onclick = () => { poolsYourOpen = !poolsYourOpen; render(); };
   wrap.appendChild(yourHeader);
   if (poolsYourOpen) {
-    if (!yourPools.length) { wrap.appendChild(el('div', 'empty', "You haven't built any pools yet.")); }
+    if (!yourPools.length) { wrap.appendChild(el('div', 'empty', "You haven't built or joined any pools yet.")); }
     else { yourPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
   }
 
