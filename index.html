@@ -373,6 +373,7 @@ let poolsOpenOpen = false;
 let poolsCompletedOpen = false;
 let dailyHousePoolExpanded = false;
 let poolJoinTarget = null; // pool object currently being joined
+let poolJoinedListOpen = {}; // poolId -> bool
 let poolJoinSides = {}; // gameId+betType -> sideAbbr
 let poolJoinUnits = {}; // gameId+betType -> confidence units
 let playerPropDraft = {}; // gameId -> {playerName, statCategory, line, side, units, visibility}
@@ -3172,20 +3173,6 @@ function renderPoolCard(pool) {
   const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 Friends only');
   card.appendChild(el('div', null, `Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
 
-  // leaderboard, once at least one participant has a fully-settled score
-  if (participants.length) {
-    const scored = participants.map(p => ({ name: p.name, ...poolParticipantScore(pool, p) }));
-    const anySettled = scored.some(s => s.total !== 0 || s.allSettled);
-    scored.sort((a,b) => b.total - a.total);
-    scored.slice(0, 5).forEach((s, i) => {
-      const row = el('div'); row.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:3px 0;';
-      row.innerHTML = `<span>${i + 1}. ${s.name}${s.name === profile.name ? ' (you)' : ''}</span><span style="font-weight:700;color:${s.total > 0 ? 'var(--accent)' : (s.total < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.total > 0 ? '+' : ''}${s.total}u${s.allSettled ? '' : ' (live)'}</span>`;
-      card.appendChild(row);
-    });
-  } else {
-    card.appendChild(el('div', 'empty', 'No one has joined yet.'));
-  }
-
   if (pool.status === 'settled') {
     card.appendChild(el('div', 'no-odds-note', 'Pool settled \u2014 purse paid out.'));
   } else if (myEntry) {
@@ -3219,14 +3206,30 @@ function renderPoolCard(pool) {
       };
       card.appendChild(leaveBtn);
     }
-  } else {
-    const joinBtn = el('button', 'lock-btn', `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.round((pool.buyInDollars/profile.unitSize)*100)/100) + 'u' : ''})`);
-    joinBtn.onclick = () => { poolJoinTarget = poolJoinTarget === pool.id ? null : pool.id; poolJoinSides = {}; poolJoinUnits = {}; render(); };
-    card.appendChild(joinBtn);
+  } else if (pool.status === 'open') {
+    card.appendChild(renderPoolJoinForm(pool));
   }
 
-  if (poolJoinTarget === pool.id && !myEntry) {
-    card.appendChild(renderPoolJoinForm(pool));
+  // who's joined — collapsed by default, same pattern as comments
+  const joinedOpen = !!poolJoinedListOpen[pool.id];
+  const joinedHeader = el('div', null, `${joinedOpen ? '\u25be' : '\u25b8'} Who's Joined (${participants.length})`);
+  joinedHeader.style.cssText = 'font-size:11px;font-weight:700;color:var(--text-dim);cursor:pointer;margin-top:10px;border-top:1px solid var(--border);padding-top:8px;';
+  joinedHeader.onclick = () => { poolJoinedListOpen[pool.id] = !joinedOpen; render(); };
+  card.appendChild(joinedHeader);
+  if (joinedOpen) {
+    if (!participants.length) {
+      card.appendChild(el('div', 'empty', 'No one has joined yet.'));
+    } else {
+      const scored = participants.map(p => ({ name: p.name, ...poolParticipantScore(pool, p) }));
+      scored.sort((a,b) => b.total - a.total);
+      const listWrap = el('div'); listWrap.style.marginTop = '6px';
+      scored.forEach((s, i) => {
+        const row = el('div'); row.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:3px 0;';
+        row.innerHTML = `<span>${i + 1}. ${s.name}${s.name === profile.name ? ' (you)' : ''}</span><span style="font-weight:700;color:${s.total > 0 ? 'var(--accent)' : (s.total < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.total > 0 ? '+' : ''}${s.total}u${s.allSettled ? '' : ' (live)'}</span>`;
+        listWrap.appendChild(row);
+      });
+      card.appendChild(listWrap);
+    }
   }
 
   if (isCreator && pool.status === 'open') {
