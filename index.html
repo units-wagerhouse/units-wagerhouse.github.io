@@ -15,7 +15,8 @@
     --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-head); -webkit-font-smoothing: antialiased; overscroll-behavior-y: contain; overflow-x: hidden; width: 100%; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-head); -webkit-font-smoothing: antialiased; overscroll-behavior-y: contain; overflow-x: hidden; width: 100%; touch-action: manipulation; }
+  button, input, select, a, .outcome-btn, .league-pill, .pick-row { touch-action: manipulation; }
   html.no-scroll { overflow: hidden; }
   body.no-scroll { overflow: hidden; position: fixed; top: 0; left: 0; right: 0; height: 100%; width: 100%; }
   #app { min-height: 100vh; padding-bottom: 50px; }
