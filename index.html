@@ -45,7 +45,7 @@
   .tab { flex: 1; text-align: center; padding: 10px 4px; font-size: 12px; font-weight: 700; color: var(--text-faint); border-bottom: 2px solid transparent; text-transform: uppercase; letter-spacing: 0.02em; }
   .tab.active { color: var(--accent); border-color: var(--accent); }
 
-  .league-scroller { display: flex; gap: 6px; overflow-x: auto; padding: 3px 16px 3px; scrollbar-width: none; }
+  .league-scroller { display: flex; gap: 6px; overflow-x: auto; padding: 3px 0; scrollbar-width: none; }
   .league-scroller::-webkit-scrollbar { display: none; }
   .league-pill { flex: 0 0 auto; padding: 5px 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-dim); font-size: 11px; font-weight: 700; white-space: nowrap; text-transform: uppercase; }
   .league-pill.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
@@ -349,9 +349,10 @@ const WH_RATING_BASE = 1500;
 let setupError = '';
 let authMode = 'login'; // 'login' | 'signup'
 let menuOpen = false;
-let activeChallengesOpen = true;
-let completedChallengesOpen = true;
+let activeChallengesOpen = false;
+let completedChallengesOpen = false;
 let acceptedChallengeLeague = null; // sport id or null
+let acceptedChallengeDateFilter = 'all'; // 'today' | 'week' | 'month' | 'year' | 'all'
 let openChallengeLeague = null; // sport id or null
 let openChallengeDateFilter = 'today'; // 'today' | 'tomorrow' | 'week'
 let openChallengeTypeFilter = 'all'; // 'all' | 'spread' | 'total' | 'player' | 'golf'
@@ -359,19 +360,24 @@ let openChallengeMinUnits = null; // null = no floor
 let unitFilterDebounce = null;
 let counterFormOpen = {};
 let friendsSubFilter = 'global'; // 'global' | 'toyou'
-let mineGlobalOpen = true;
-let mineDirectOpen = true;
+let mineGlobalOpen = false;
+let mineDirectOpen = false;
 let minimizedGameCards = {};
 let commentSectionOpen = {};
 let commentVisibilityFilter = 'all'; // 'all' | 'public' | 'friends'
 let poolBuilderOpen = false;
-let poolsYourOpen = true;
-let poolsOpenOpen = true;
-let poolsCompletedOpen = true;
+let poolsYourOpen = false;
+let poolsOpenOpen = false;
+let poolsCompletedOpen = false;
 let dailyHousePoolExpanded = false;
 let poolJoinTarget = null; // pool object currently being joined
 let poolJoinSides = {}; // gameId+betType -> sideAbbr
 let poolJoinUnits = {}; // gameId+betType -> confidence units
+let playerPropDraft = {}; // gameId -> {playerName, statCategory, line, side, units, visibility}
+function getPropDraft(gameId) {
+  if (!playerPropDraft[gameId]) playerPropDraft[gameId] = { playerName: '', statCategory: null, line: '', side: null, units: '1', visibility: '' };
+  return playerPropDraft[gameId];
+}
 let seenAcceptedIds = null; // lazy-loaded Set from localStorage
 function getSeenAcceptedIds() {
   if (seenAcceptedIds) return seenAcceptedIds;
@@ -814,6 +820,7 @@ function renderInner() {
     renderTabs();
     if (activeTab === 'games') main.appendChild(renderGames());
     else if (activeTab === 'existing') main.appendChild(renderExistingChallenges());
+    else if (activeTab === 'requested') main.appendChild(renderRequestedSection());
     else if (activeTab === 'completed') main.appendChild(renderCompletedChallenges());
   }
   window.scrollTo(0, scrollY);
@@ -906,12 +913,16 @@ function renderTabs() {
   const bar = document.getElementById('tabbar');
   bar.innerHTML = '';
   if (!profile) return;
-  [['existing','Open'],['games','Create'],['completed','Accepted']].forEach(([id,label]) => {
+  [['existing','Open'],['games','Create'],['requested','Requested'],['completed','Accepted']].forEach(([id,label]) => {
     const t = el('div', 'tab' + (activeTab === id ? ' active' : ''), label);
     t.style.position = 'relative';
     t.onclick = () => { activeTab = id; if (id === 'completed') markAcceptedChallengesSeen(); render(); };
+    if (id === 'requested' && unseenPendingFriendChallenges().length > 0) {
+      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-2px;right:6px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
+      t.appendChild(dot);
+    }
     if (id === 'completed' && newlyAcceptedChallengesForMe().length > 0) {
-      const dot = el('span'); dot.style.cssText = 'position:absolute;top:4px;right:10px;width:8px;height:8px;border-radius:50%;background:#3B82F6;';
+      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-2px;right:6px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
       t.appendChild(dot);
     }
     bar.appendChild(t);
@@ -2059,16 +2070,6 @@ function renderDailyChallenge() {
   banner.appendChild(b1);
   wrap.appendChild(banner);
 
-  const historyToggle = el('button', null, dailyShowHistory ? '← Back to today' : 'Past days');
-  historyToggle.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);font-size:12px;font-weight:700;padding:8px 12px;border-radius:6px;margin:10px 0 4px;';
-  historyToggle.onclick = () => { dailyShowHistory = !dailyShowHistory; render(); };
-  wrap.appendChild(historyToggle);
-
-  if (dailyShowHistory) {
-    wrap.appendChild(renderHouseWeekHistory());
-    return wrap;
-  }
-
   if (myBets.length === 0) {
     const prevDays = allWeekKeysFor(profile.name).filter(w => w < wk);
     const lastDay = prevDays.length ? prevDays[prevDays.length - 1] : null;
@@ -2307,9 +2308,16 @@ function renderTrackerWizard() {
   const step3 = el('div'); step3.style.display = 'none';
   const row3 = el('div'); row3.style.cssText = 'margin-bottom:10px;';
   const betTypeSel = el('select'); betTypeSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:9px;font-size:13px;box-sizing:border-box;';
-  [['spread','Spread'],['total','Total'],['moneyline','ML']].forEach(([v,l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; betTypeSel.appendChild(o); });
+  [['spread','Spread'],['total','Total'],['moneyline','ML'],['playerprop','Player Prop']].forEach(([v,l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; betTypeSel.appendChild(o); });
   row3.appendChild(betTypeSel);
   step3.appendChild(row3);
+
+  const playerNameWrap = el('div'); playerNameWrap.style.cssText = 'display:none;margin-bottom:10px;';
+  playerNameWrap.appendChild(el('label', null, 'Player')).style.cssText = 'font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px;';
+  const playerNameInput = el('input'); playerNameInput.placeholder = 'e.g. Jalen Hurts';
+  playerNameInput.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:9px;font-size:14px;';
+  playerNameWrap.appendChild(playerNameInput);
+  step3.appendChild(playerNameWrap);
 
   step3.appendChild(el('label', null, 'Your side')).style.cssText = 'font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px;';
   const sideSel = el('select');
@@ -2343,7 +2351,7 @@ function renderTrackerWizard() {
   function refreshSideOptions() {
     sideSel.innerHTML = '';
     const g = gamesForDate.find(x => x.id === matchupSel.value);
-    if (betTypeSel.value === 'total') {
+    if (betTypeSel.value === 'total' || betTypeSel.value === 'playerprop') {
       ['OVER','UNDER'].forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v === 'OVER' ? 'Over' : 'Under'; sideSel.appendChild(o); });
     } else if (g) {
       [{ v: g.away, l: g.awayName }, { v: g.home, l: g.homeName }].forEach(t => { const o = document.createElement('option'); o.value = t.v; o.textContent = t.l; sideSel.appendChild(o); });
@@ -2355,7 +2363,8 @@ function renderTrackerWizard() {
     const isML = betTypeSel.value === 'moneyline';
     lineInput.style.display = isML ? 'none' : '';
     lineLabel.style.display = isML ? 'none' : '';
-    lineLabel.textContent = betTypeSel.value === 'total' ? 'Total line' : 'Spread';
+    lineLabel.textContent = betTypeSel.value === 'total' ? 'Total line' : (betTypeSel.value === 'playerprop' ? 'Prop line' : 'Spread');
+    playerNameWrap.style.display = betTypeSel.value === 'playerprop' ? 'block' : 'none';
   }
   function revealStepsAfterMatchup(hasMatchup) {
     step3.style.display = hasMatchup ? 'block' : 'none';
@@ -2394,10 +2403,12 @@ function renderTrackerWizard() {
     const matchupText = matchupSel.value ? matchupSel.options[matchupSel.selectedIndex].textContent : manualMatchupInput.value;
     if (!matchupText) { errEl.textContent = 'Pick or enter a matchup first.'; return null; }
     if (betTypeSel.value !== 'moneyline' && !lineInput.value) { errEl.textContent = 'Enter the line.'; return null; }
+    if (betTypeSel.value === 'playerprop' && !playerNameInput.value.trim()) { errEl.textContent = "Enter the player's name."; return null; }
     const g = gamesForDate.find(x => x.id === matchupSel.value);
     const sideLabelText = sideSel.options[sideSel.selectedIndex] ? sideSel.options[sideSel.selectedIndex].textContent : sideSel.value;
     let selectionText;
     if (betTypeSel.value === 'total') selectionText = (sideSel.value === 'OVER' ? 'Over' : 'Under') + ' ' + lineInput.value;
+    else if (betTypeSel.value === 'playerprop') selectionText = playerNameInput.value.trim() + ' ' + (sideSel.value === 'OVER' ? 'Over' : 'Under') + ' ' + lineInput.value;
     else if (betTypeSel.value === 'moneyline') selectionText = sideLabelText + ' ML';
     else selectionText = sideLabelText + ' ' + (parseFloat(lineInput.value) > 0 ? '+' + lineInput.value : lineInput.value);
     errEl.textContent = '';
@@ -2406,7 +2417,7 @@ function renderTrackerWizard() {
       placedAt: dateInput.value || null,
       matchedSport: leagueSel.value || null, matchedGameId: g ? g.id : null,
       homeAbbr: g ? g.home : null, awayAbbr: g ? g.away : null,
-      betSide: (betTypeSel.value === 'total') ? null : (g ? sideSel.value : null),
+      betSide: (betTypeSel.value === 'total' || betTypeSel.value === 'playerprop') ? null : (g ? sideSel.value : null),
       betType: betTypeSel.value
     };
   }
@@ -2604,7 +2615,7 @@ function renderKalshiSection() {
 
     // bet type filter chips
     const typeScroller = el('div', 'league-scroller');
-    [['all','All'], ['spread','Spread'], ['total','Total'], ['moneyline','ML'], ['parlay','Parlay']].forEach(([mode,label]) => {
+    [['all','All Types'], ['spread','Spread'], ['total','Total'], ['moneyline','ML'], ['playerprop','Player Prop'], ['parlay','Parlay']].forEach(([mode,label]) => {
       const pill = el('button', 'league-pill' + (trackerBetTypeFilter === mode ? ' active' : ''), label);
       pill.onclick = () => { trackerBetTypeFilter = mode; render(); };
       typeScroller.appendChild(pill);
@@ -3898,33 +3909,27 @@ function renderSwipeCart() {
 function pendingFriendChallengesForMe() {
   return allPicks.filter(p => p.poolType === 'challenge' && p.visibility === 'friend' && p.targetFriend === profile.name && p.status === 'open');
 }
+let seenFriendChallengeIds = null;
+function getSeenFriendChallengeIds() {
+  if (seenFriendChallengeIds) return seenFriendChallengeIds;
+  try { seenFriendChallengeIds = new Set(JSON.parse(localStorage.getItem('ww_seen_friend_challenges') || '[]')); }
+  catch (e) { seenFriendChallengeIds = new Set(); }
+  return seenFriendChallengeIds;
+}
+function unseenPendingFriendChallenges() {
+  const seen = getSeenFriendChallengeIds();
+  return pendingFriendChallengesForMe().filter(p => !seen.has(p.id));
+}
+function markFriendChallengesSeen() {
+  const seen = getSeenFriendChallengeIds();
+  let changed = false;
+  pendingFriendChallengesForMe().forEach(p => { if (!seen.has(p.id)) { seen.add(p.id); changed = true; } });
+  if (changed) { try { localStorage.setItem('ww_seen_friend_challenges', JSON.stringify([...seen])); } catch (e) {} }
+}
 function renderExistingChallenges() {
-  const toggle = el('div', 'league-scroller');
-  [['global','Global'],['friends','Friends'],['mine','Mine']].forEach(([id,label]) => {
-    const pill = el('button', 'league-pill' + (existingChallengeView === id ? ' active' : ''), label);
-    pill.style.position = 'relative';
-    pill.onclick = () => { existingChallengeView = id; challengeBrowseMode = 'swipe'; swipeStackInitialized = false; openChallengeLeague = null; render(); };
-    if (id === 'friends' && pendingFriendChallengesForMe().length > 0) {
-      const dot = el('span'); dot.style.cssText = 'position:absolute;top:2px;right:4px;width:8px;height:8px;border-radius:50%;background:#3B82F6;';
-      pill.appendChild(dot);
-    }
-    toggle.appendChild(pill);
-  });
-
   const all = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
   const stillActive = ch => ch.status === 'open';
-  const friendNames = new Set((profile.friends || []).map(f => f.name));
-  let byView;
-  if (existingChallengeView === 'global') {
-    byView = all.filter(ch => ch.visibility === 'public' && stillActive(ch));
-  } else if (existingChallengeView === 'friends') {
-    byView = all.filter(ch => stillActive(ch) && (
-      (ch.visibility === 'public' && friendNames.has(ch.creator)) ||
-      (ch.visibility === 'friend' && (ch.creator === profile.name || ch.targetFriend === profile.name))
-    ));
-  } else {
-    byView = all.filter(ch => ch.creator === profile.name && stillActive(ch));
-  }
+  const byView = all.filter(ch => ch.visibility === 'public' && stillActive(ch));
 
   let leagueScroller = el('div', 'league-scroller');
   const allPill = el('button', 'league-pill' + (openChallengeLeague === null ? ' active' : ''), 'All leagues');
@@ -3950,14 +3955,14 @@ function renderExistingChallenges() {
   });
 
   const typeScroller = el('div', 'league-scroller');
-  [['all','All'],['spread','Spread'],['total','Total'],['moneyline','ML'],['player','Player Prop']].forEach(([id,label]) => {
+  [['all','All Types'],['spread','Spread'],['total','Total'],['moneyline','ML'],['player','Player Prop']].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (openChallengeTypeFilter === id ? ' active' : ''), label);
     pill.onclick = () => { openChallengeTypeFilter = id; swipeStackInitialized = false; render(); };
     typeScroller.appendChild(pill);
   });
 
   const maxUnitsScroller = el('div');
-  maxUnitsScroller.style.cssText = 'display:flex;gap:8px;padding:3px 16px;align-items:center;';
+  maxUnitsScroller.style.cssText = 'display:flex;gap:8px;padding:3px 0;align-items:center;';
   const minLabel = el('span', null, 'Units:'); minLabel.style.cssText = 'font-size:11px;color:var(--text-faint);font-weight:700;flex-shrink:0;';
   maxUnitsScroller.appendChild(minLabel);
   const minInput = el('input'); minInput.type = 'number'; minInput.min = '0'; minInput.step = '0.5'; minInput.placeholder = 'No min'; minInput.id = 'openChallengeMinUnitsInput';
@@ -4018,6 +4023,49 @@ function renderExistingChallenges() {
   });
   list.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
 
+  if (!swipeStackInitialized) {
+    const persistedCartIds = cartChallengeIdsFor(profile.name);
+    swipeCart = all.filter(ch => persistedCartIds.has(ch.id) && ch.status === 'open');
+    const cartIds = new Set(swipeCart.map(c => c.id));
+    const declinedIds = declinedChallengeIdsFor(profile.name);
+    swipeStack = list.filter(ch => ch.creator !== profile.name && ch.acceptedBy !== profile.name && !cartIds.has(ch.id) && !declinedIds.has(ch.id));
+    swipeStackInitialized = true;
+  }
+  if (challengeBrowseMode === 'cart') {
+    return renderSwipeCart();
+  }
+  return renderSwipeMode([leagueScroller, dateScroller, typeScroller, maxUnitsScroller]);
+}
+
+function renderRequestedSection() {
+  const toggle = el('div', 'league-scroller');
+  [['global','Global'],['friends','Friends'],['mine','Mine']].forEach(([id,label]) => {
+    const pill = el('button', 'league-pill' + (existingChallengeView === id ? ' active' : ''), label);
+    pill.style.position = 'relative';
+    pill.onclick = () => { existingChallengeView = id; challengeBrowseMode = 'swipe'; swipeStackInitialized = false; render(); };
+    if (id === 'friends' && unseenPendingFriendChallenges().length > 0) {
+      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
+      pill.appendChild(dot);
+    }
+    toggle.appendChild(pill);
+  });
+
+  const all = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
+  const stillActive = ch => ch.status === 'open';
+  const friendNames = new Set((profile.friends || []).map(f => f.name));
+  let byView;
+  if (existingChallengeView === 'global') {
+    byView = all.filter(ch => ch.visibility === 'public' && stillActive(ch));
+  } else if (existingChallengeView === 'friends') {
+    byView = all.filter(ch => stillActive(ch) && (
+      (ch.visibility === 'public' && friendNames.has(ch.creator)) ||
+      (ch.visibility === 'friend' && (ch.creator === profile.name || ch.targetFriend === profile.name))
+    ));
+  } else {
+    byView = all.filter(ch => ch.creator === profile.name && stillActive(ch));
+  }
+  const list = byView.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+
   if (existingChallengeView === 'global') {
     if (!swipeStackInitialized) {
       const persistedCartIds = cartChallengeIdsFor(profile.name);
@@ -4030,14 +4078,10 @@ function renderExistingChallenges() {
     if (challengeBrowseMode === 'cart') {
       return renderSwipeCart();
     }
-    return renderSwipeMode([leagueScroller, dateScroller, typeScroller, maxUnitsScroller, toggle]);
+    return renderSwipeMode([toggle]);
   }
 
   const wrap = el('div');
-  if (leagueScroller) wrap.appendChild(leagueScroller);
-  wrap.appendChild(dateScroller);
-  wrap.appendChild(typeScroller);
-  wrap.appendChild(maxUnitsScroller);
   wrap.appendChild(toggle);
 
   if (existingChallengeView === 'friends') {
@@ -4045,9 +4089,9 @@ function renderExistingChallenges() {
     [['global','To Everyone'],['toyou','To You']].forEach(([id,label]) => {
       const pill = el('button', 'league-pill' + (friendsSubFilter === id ? ' active' : ''), label);
       pill.style.position = 'relative';
-      pill.onclick = () => { friendsSubFilter = id; swipeStackInitialized = false; render(); };
-      if (id === 'toyou' && pendingFriendChallengesForMe().length > 0) {
-        const dot = el('span'); dot.style.cssText = 'position:absolute;top:2px;right:4px;width:8px;height:8px;border-radius:50%;background:#3B82F6;';
+      pill.onclick = () => { friendsSubFilter = id; swipeStackInitialized = false; if (id === 'toyou') markFriendChallengesSeen(); render(); };
+      if (id === 'toyou' && unseenPendingFriendChallenges().length > 0) {
+        const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
         pill.appendChild(dot);
       }
       friendsSubScroller.appendChild(pill);
@@ -4069,7 +4113,7 @@ function renderExistingChallenges() {
     if (challengeBrowseMode === 'cart') {
       return renderSwipeCart();
     }
-    return renderSwipeMode([leagueScroller, dateScroller, typeScroller, maxUnitsScroller, toggle, friendsSubScroller]);
+    return renderSwipeMode([toggle, friendsSubScroller]);
   }
 
   const mineGlobal = list.filter(ch => ch.visibility === 'public');
@@ -4160,7 +4204,35 @@ function renderCompletedChallenges() {
     wrap.appendChild(scroller);
   }
 
-  const filtered = acceptedChallengeLeague === null ? mine : mine.filter(ch => ch.sport === acceptedChallengeLeague);
+  const dateScroller = el('div', 'league-scroller');
+  [['today','Today'],['week','This Week'],['month','This Month'],['year','This Year'],['all','All-time']].forEach(([id,label]) => {
+    const pill = el('button', 'league-pill' + (acceptedChallengeDateFilter === id ? ' active' : ''), label);
+    pill.onclick = () => { acceptedChallengeDateFilter = id; render(); };
+    dateScroller.appendChild(pill);
+  });
+  wrap.appendChild(dateScroller);
+
+  const byLeague = acceptedChallengeLeague === null ? mine : mine.filter(ch => ch.sport === acceptedChallengeLeague);
+  const now2 = new Date();
+  const filtered = byLeague.filter(ch => {
+    if (acceptedChallengeDateFilter === 'all') return true;
+    const idx = gameIndex[ch.gameId];
+    const d = (idx && idx.game && idx.game.start) ? new Date(idx.game.start) : new Date(ch.timestamp);
+    if (acceptedChallengeDateFilter === 'today') {
+      return d.getFullYear() === now2.getFullYear() && d.getMonth() === now2.getMonth() && d.getDate() === now2.getDate();
+    }
+    if (acceptedChallengeDateFilter === 'week') {
+      const weekAgo = new Date(now2); weekAgo.setDate(weekAgo.getDate() - 7);
+      return d >= weekAgo && d <= now2;
+    }
+    if (acceptedChallengeDateFilter === 'month') {
+      return d.getFullYear() === now2.getFullYear() && d.getMonth() === now2.getMonth();
+    }
+    if (acceptedChallengeDateFilter === 'year') {
+      return d.getFullYear() === now2.getFullYear();
+    }
+    return true;
+  });
   const active = filtered.filter(ch => ch.status === 'accepted' && settlePick(ch).status === 'pending');
   const completed = filtered.filter(ch => ch.status === 'declined' || (ch.status === 'accepted' && settlePick(ch).status !== 'pending'));
   active.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -4182,7 +4254,7 @@ function renderCompletedChallenges() {
   const c2 = el('div', 'rank-cell');
   c2.appendChild(el('div', 'rc-label', 'Units<br>won'));
   const unitsWonRounded = Math.round(unitsWonChallenges);
-  c2.appendChild(el('div', 'rc-value', (unitsWonRounded > 0 ? '+' : '') + unitsWonRounded + 'u')).style.color = unitsWonChallenges >= 0 ? '#4CAF50' : 'var(--danger)';
+  c2.appendChild(el('div', 'rc-value', (unitsWonRounded > 0 ? '+' : '') + unitsWonRounded)).style.color = unitsWonChallenges >= 0 ? '#4CAF50' : 'var(--danger)';
   banner.appendChild(c2);
   const c3 = el('div', 'rank-cell');
   c3.appendChild(el('div', 'rc-label', 'Win<br>Percentage'));
@@ -4550,6 +4622,7 @@ function renderGameCard(g, sport, meta) {
 
   function renderPlayerPropPanel() {
     const section = el('div');
+    const draft = getPropDraft(g.id);
     const rosterKeyAway = sport + ':' + (g.away || '').toLowerCase();
     const rosterKeyHome = sport + ':' + (g.home || '').toLowerCase();
     const awayRoster = teamRosterCache[rosterKeyAway];
@@ -4576,11 +4649,16 @@ function renderGameCard(g, sport, meta) {
         sortedRoster.forEach(p => { const o = document.createElement('option'); o.value = p.name; o.textContent = `${p.name} (${p.position})`; grp.appendChild(o); });
         nameSel.appendChild(grp);
       });
+      nameSel.value = draft.playerName || '';
+      nameSel.onchange = () => { draft.playerName = nameSel.value; };
       section.appendChild(nameSel);
     } else {
       section.appendChild(el('div', 'setup-hint', "Couldn't load rosters for this game — type the player's name instead."));
       nameInput = el('input'); nameInput.placeholder = sport === 'mlb' ? "Player name (e.g. Gerrit Cole)" : "Player name (e.g. Jalen Hurts)";
       nameInput.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-top:8px;box-sizing:border-box;';
+      nameInput.id = 'propname-' + g.id;
+      nameInput.value = draft.playerName || '';
+      nameInput.oninput = () => { draft.playerName = nameInput.value; };
       section.appendChild(nameInput);
     }
 
@@ -4588,20 +4666,24 @@ function renderGameCard(g, sport, meta) {
     const catSel = el('select');
     catSel.style.cssText = 'background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:12px;min-width:0;box-sizing:border-box;';
     PLAYER_PROP_CATEGORIES.filter(c => c.sport === sport).forEach(c => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.label; catSel.appendChild(o); });
+    if (draft.statCategory) catSel.value = draft.statCategory;
+    catSel.onchange = () => { draft.statCategory = catSel.value; };
     row.appendChild(catSel);
     const lineInput = el('input'); lineInput.type = 'number'; lineInput.step = '0.5'; lineInput.placeholder = 'Line';
     lineInput.style.cssText = 'background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:12px;min-width:0;box-sizing:border-box;';
+    lineInput.id = 'propline-' + g.id;
+    lineInput.value = draft.line || '';
+    lineInput.oninput = () => { draft.line = lineInput.value; };
     row.appendChild(lineInput);
     section.appendChild(row);
 
     const sideGrid = el('div', 'outcome-grid');
     sideGrid.style.marginTop = '8px';
-    let chosenSide = null;
     ['OVER','UNDER'].forEach(sv => {
-      const btn = el('div', 'outcome-btn');
+      const btn = el('div', 'outcome-btn' + (draft.side === sv ? ' selected' : ''));
       btn.innerHTML = `<div class="oc-team">${sv === 'OVER' ? 'Over' : 'Under'}</div>`;
       btn.onclick = () => {
-        chosenSide = sv;
+        draft.side = sv;
         sideGrid.querySelectorAll('.outcome-btn').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
         createBtn2.disabled = false;
@@ -4615,18 +4697,23 @@ function renderGameCard(g, sport, meta) {
     const row2 = el('div'); row2.style.cssText = 'display:flex;align-items:center;gap:6px;';
     const unitsLabel2 = el('span', null, 'Units Staked'); unitsLabel2.style.cssText = 'font-size:11px;color:var(--text-dim);font-weight:700;flex-shrink:0;';
     row2.appendChild(unitsLabel2);
-    const unitsInput2 = el('input'); unitsInput2.type = 'number'; unitsInput2.min = '0.5'; unitsInput2.step = '0.5'; unitsInput2.value = '1'; unitsInput2.placeholder = 'Units';
+    const unitsInput2 = el('input'); unitsInput2.type = 'number'; unitsInput2.min = '0.5'; unitsInput2.step = '0.5'; unitsInput2.placeholder = 'Units';
+    unitsInput2.id = 'propunits-' + g.id;
+    unitsInput2.value = draft.units || '1';
+    unitsInput2.oninput = () => { draft.units = unitsInput2.value; };
     unitsInput2.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
     row2.appendChild(unitsInput2);
     const visSel2 = el('select');
     visSel2.style.cssText = 'flex:0 0 auto;width:134px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
     const publicOpt2 = document.createElement('option'); publicOpt2.value = ''; publicOpt2.textContent = '\ud83d\udce2 Post publicly'; visSel2.appendChild(publicOpt2);
     (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel2.appendChild(o); });
+    visSel2.value = draft.visibility || '';
+    visSel2.onchange = () => { draft.visibility = visSel2.value; };
     row2.appendChild(visSel2);
     slip.appendChild(row2);
 
-    const createBtn2 = el('button', 'lock-btn', 'Select Over or Under');
-    createBtn2.disabled = true;
+    const createBtn2 = el('button', 'lock-btn', draft.side ? 'Submit Challenge' : 'Select Over or Under');
+    createBtn2.disabled = !draft.side;
     slip.appendChild(createBtn2);
     const errEl2 = el('div', 'pick-error');
     slip.appendChild(errEl2);
@@ -4639,6 +4726,7 @@ function renderGameCard(g, sport, meta) {
       const playerName = nameSel ? nameSel.value : (nameInput ? nameInput.value.trim() : '');
       const line = parseFloat(lineInput.value);
       const units = parseFloat(unitsInput2.value);
+      const chosenSide = draft.side;
       errEl2.textContent = '';
       if (!playerName) { errEl2.textContent = "Enter the player's name."; return; }
       if (isNaN(line)) { errEl2.textContent = 'Enter a line.'; return; }
@@ -4662,6 +4750,7 @@ function renderGameCard(g, sport, meta) {
       if (reserveTx) allPicks.push(reserveTx);
       try {
         await savePicks(allPicks);
+        delete playerPropDraft[g.id];
         render();
       } catch (e) {
         allPicks.pop();
