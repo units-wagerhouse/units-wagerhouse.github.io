@@ -1118,9 +1118,22 @@ function todaysRemainingBudget() {
   if (profile.dailyRiskDate !== houseDayKey(new Date()) || profile.dailyRiskAmount == null) return 0;
   return profile.dailyRiskAmount + netChallengeTxsToday();
 }
+function hasPendingChallengesToday() {
+  const today = houseDayKey(new Date());
+  return allPicks.some(p => {
+    if (p.poolType !== 'challenge' || p.propType === 'combo_pool') return false;
+    const involvesMe = p.creator === profile.name || p.acceptedBy === profile.name;
+    if (!involvesMe) return false;
+    if (houseDayKey(new Date(p.timestamp)) !== today) return false;
+    if (p.status === 'open' && p.creator === profile.name) return true; // stake reserved, still waiting for someone to accept
+    if (p.status === 'accepted') return settlePick(p).status === 'pending'; // game not final yet
+    return false;
+  });
+}
 function requireDailyBudget(actionLabel) {
   if (todaysRemainingBudget() > 0) return true;
-  alert(`You've used up today's risk budget. Come back after midnight to set a new one \u2014 that's the whole point of setting a limit before you start.`);
+  if (hasPendingChallengesToday()) return true; // your stake is tied up, not gone — you could still win it back once those settle
+  alert(`You've used up today's risk budget and everything from today has settled. Come back after midnight to set a new one \u2014 that's the whole point of setting a limit before you start.`);
   return false;
 }
 let dailyRiskDraftAmount = null;
@@ -1218,7 +1231,8 @@ function renderAccountScreen() {
   unitCard.appendChild(el('div', null, "Today's Risk Budget")).style.cssText = 'font-size:16px;font-weight:800;margin-bottom:4px;';
   if (profile.dailyRiskDate === houseDayKey(new Date()) && profile.dailyRiskAmount != null) {
     const remaining = todaysRemainingBudget();
-    unitCard.appendChild(el('div', 'setup-hint', `You set aside $${profile.dailyRiskAmount.toFixed(2)} to risk today (1 unit = $${(profile.dailyRiskAmount / 100).toFixed(2)}). $${Math.max(0, remaining).toFixed(2)} of that is still available. This resets at midnight, when you'll be asked again based on your bankroll at that time.`));
+    const pendingNote = remaining <= 0 && hasPendingChallengesToday() ? " You're at $0 available, but you still have bets pending today \u2014 you're not locked out until those settle." : '';
+    unitCard.appendChild(el('div', 'setup-hint', `You set aside $${profile.dailyRiskAmount.toFixed(2)} to risk today (1 unit = $${(profile.dailyRiskAmount / 100).toFixed(2)}). $${Math.max(0, remaining).toFixed(2)} of that is still available.${pendingNote} This resets at midnight, when you'll be asked again based on your bankroll at that time.`));
   } else {
     unitCard.appendChild(el('div', 'setup-hint', "You'll be asked how much you're willing to risk today the next time you open the app. This resets every day at midnight \u2014 it's not something you set manually here."));
   }
@@ -1234,15 +1248,55 @@ function renderAccountScreen() {
   card.appendChild(amtInput);
 
   const btnRow = el('div'); btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
-  const depositBtn = el('button', 'lock-btn', 'Deposit'); depositBtn.style.flex = '1';
+  const depositBtn = el('button', 'lock-btn', 'Deposit'); depositBtn.style.flex = '1'; depositBtn.style.marginTop = '0';
   const withdrawBtn = el('button', null, 'Withdraw');
-  withdrawBtn.style.cssText = 'flex:1;background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:11px;font-weight:700;font-size:14px;';
+  withdrawBtn.style.cssText = 'flex:1;margin-top:0;background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:10px;font-size:13.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.02em;';
   btnRow.appendChild(depositBtn); btnRow.appendChild(withdrawBtn);
   card.appendChild(btnRow);
 
   const errEl = el('div', 'pick-error');
   card.appendChild(errEl);
   wrap.appendChild(card);
+
+  const openMine = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.creator === profile.name && p.status === 'open');
+  if (openMine.length) {
+    const cleanupCard = el('div', 'setup-card');
+    cleanupCard.style.marginTop = '14px';
+    cleanupCard.appendChild(el('div', null, 'Cancel All Open Challenges')).style.cssText = 'font-size:16px;font-weight:800;margin-bottom:4px;';
+    cleanupCard.appendChild(el('div', 'setup-hint', `You have ${openMine.length} unaccepted challenge${openMine.length === 1 ? '' : 's'} you posted, each still holding its stake in reserve. Cancel them all at once to refund those stakes back to your balance.`));
+    const cleanupBtn = el('button', null, `Cancel All (${openMine.length}) and Refund`);
+    cleanupBtn.style.cssText = 'width:100%;margin-top:10px;background:none;border:1px solid var(--danger);color:var(--danger);border-radius:6px;padding:10px;font-size:13.5px;font-weight:800;';
+    const cleanupErr = el('div', 'pick-error');
+    cleanupCard.appendChild(cleanupBtn);
+    cleanupCard.appendChild(cleanupErr);
+    wrap.appendChild(cleanupCard);
+
+    cleanupBtn.onclick = async () => {
+      if (!confirm(`Cancel all ${openMine.length} open challenges and refund their stakes? This can't be undone.`)) return;
+      cleanupBtn.disabled = true; cleanupBtn.textContent = 'Cancelling…';
+      const before = allPicks.slice();
+      const ids = new Set(openMine.map(ch => ch.id));
+      allPicks = allPicks.filter(p => !ids.has(p.id));
+      openMine.forEach(ch => {
+        allPicks.push({
+          id: profile.name + '_accounttx_bulkrefund_' + ch.id,
+          poolType: 'accountTx', player: profile.name,
+          type: 'deposit', amount: ch.units * (ch.creatorUnitSize || profile.unitSize || 0),
+          note: `Stake refunded \u2014 bulk cancel`,
+          relatedChallengeId: ch.id,
+          timestamp: new Date().toISOString()
+        });
+      });
+      try {
+        await savePicks(allPicks);
+        render();
+      } catch (e) {
+        allPicks = before;
+        cleanupErr.textContent = "Couldn't cancel (" + describeFetchError(e) + ") — try again.";
+        cleanupBtn.disabled = false; cleanupBtn.textContent = `Cancel All (${openMine.length}) and Refund`;
+      }
+    };
+  }
 
   async function recordTx(type) {
     const amount = parseFloat(amtInput.value);
