@@ -3180,8 +3180,6 @@ function renderPoolCard(pool) {
     card.appendChild(el('div', 'no-odds-note', 'Pool settled \u2014 purse paid out.'));
   } else if (myEntry) {
     card.appendChild(el('div', 'no-odds-note', "You're in \u2014 waiting for games to finish."));
-  } else if (isCreator) {
-    card.appendChild(el('div', 'no-odds-note', "You created this pool."));
   } else {
     const joinBtn = el('button', 'lock-btn', `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.round((pool.buyInDollars/profile.unitSize)*100)/100) + 'u' : ''})`);
     joinBtn.onclick = () => { poolJoinTarget = poolJoinTarget === pool.id ? null : pool.id; poolJoinSides = {}; poolJoinUnits = {}; render(); };
