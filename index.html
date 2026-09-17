@@ -27,10 +27,10 @@
   header.top h1 { font-size: 19px; font-weight: 800; margin: 0; letter-spacing: -0.01em; text-transform: uppercase; color: var(--text); }
   header.top h1 span { background: linear-gradient(135deg, #FFC629, #EF3B3B); -webkit-background-clip: text; background-clip: text; color: transparent; }
   .brand { display: flex; align-items: center; gap: 8px; }
-  .header-actions { display: flex; align-items: center; gap: 6px; }
+  .header-actions { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
   header.top .who { font-size: 12px; color: var(--text-dim); }
-  .menu-btn { background: none; border: none; color: var(--text); font-size: 22px; line-height: 1; padding: 4px 6px; cursor: pointer; height: 34px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
-  .friends-btn { background: none; border: none; padding: 4px 6px; cursor: pointer; height: 34px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; position: relative; }
+  .menu-btn { background: none; border: none; color: var(--text); font-size: 20px; line-height: 1; padding: 4px 6px; cursor: pointer; height: 28px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
+  .friends-btn { background: none; border: none; padding: 4px 6px; cursor: pointer; height: 28px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; position: relative; }
   .balance-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 0 10px; cursor: pointer; color: var(--accent); font-weight: 800; font-size: 12px; font-family: var(--font-mono); height: 26px; display: flex; align-items: center; }
   .menu-dropdown { position: absolute; top: 44px; right: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; z-index: 30; min-width: 160px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
   .menu-dropdown .menu-item { padding: 12px 16px; font-size: 13.5px; font-weight: 700; color: var(--text); border-bottom: 1px solid var(--border); cursor: pointer; }
@@ -375,6 +375,7 @@ let poolsCompletedOpen = false;
 let dailyHousePoolExpanded = false;
 let poolJoinTarget = null; // pool object currently being joined
 let poolJoinedListOpen = {}; // poolId -> bool
+let poolLegsListOpen = {}; // poolId -> bool
 let poolJoinSides = {}; // gameId+betType -> sideAbbr
 let poolJoinUnits = {}; // gameId+betType -> confidence units
 let playerPropDraft = {}; // gameId -> {playerName, statCategory, line, side, units, visibility}
@@ -3306,6 +3307,23 @@ function renderPoolCard(pool) {
       });
       card.appendChild(listWrap);
     }
+  }
+
+  // individual bets in this pool — collapsed by default, same pattern as comments
+  const legsOpen = !!poolLegsListOpen[pool.id];
+  const legsHeader = el('div', null, `${legsOpen ? '\u25be' : '\u25b8'} Individual Bets (${pool.legs.length})`);
+  legsHeader.style.cssText = 'font-size:11px;font-weight:700;color:var(--text-dim);cursor:pointer;margin-top:10px;border-top:1px solid var(--border);padding-top:8px;';
+  legsHeader.onclick = () => { poolLegsListOpen[pool.id] = !legsOpen; render(); };
+  card.appendChild(legsHeader);
+  if (legsOpen) {
+    const legsWrap = el('div'); legsWrap.style.marginTop = '6px';
+    pool.legs.forEach(leg => {
+      const legLabel = leg.betType === 'total' ? 'Total' : leg.betType === 'moneyline' ? 'Moneyline' : leg.betType === 'playerprop' ? `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} (${leg.line})` : 'Spread';
+      const row = el('div'); row.style.cssText = 'font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);';
+      row.innerHTML = `<span style="font-weight:700;">${leg.gameLabel}</span> <span style="color:var(--text-faint);">\u2014 ${legLabel}</span>`;
+      legsWrap.appendChild(row);
+    });
+    card.appendChild(legsWrap);
   }
 
   if (isCreator && pool.status === 'open') {
