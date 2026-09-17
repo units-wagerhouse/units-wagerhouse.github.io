@@ -1061,7 +1061,7 @@ function renderProfileScreen() {
   dangerCard.appendChild(el('div', null, 'Delete My Account')).style.cssText = 'font-size:14px;font-weight:800;margin-bottom:4px;color:var(--danger);';
   dangerCard.appendChild(el('div', 'setup-hint', `This permanently deletes your login, your profile, and every House Bet pick, tracked bet, and challenge tied to "${profile.name}" \u2014 everywhere this app stores data. It cannot be undone. One thing this can't reach: if other people have added you as a friend, this can't remove you from their friends list, since that lives in their own account.`));
   dangerCard.appendChild(el('label', null, `Type "${profile.username}" to confirm`)).style.marginTop = '10px';
-  const confirmInput = el('input'); confirmInput.placeholder = profile.username; confirmInput.autocapitalize = 'none';
+  const confirmInput = el('input'); confirmInput.placeholder = 'Type your username to confirm'; confirmInput.autocapitalize = 'none';
   dangerCard.appendChild(confirmInput);
   const dangerErr = el('div', 'pick-error');
   const dangerBtn = el('button', null, 'Delete My Account');
@@ -1325,7 +1325,43 @@ function renderAccountScreen() {
   withdrawBtn.onclick = () => recordTx('withdraw');
 
   const txs = accountTxsFor(profile.name).slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-  wrap.appendChild(el('div', 'week-header', 'History'));
+  const historyHeaderRow = el('div'); historyHeaderRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
+  historyHeaderRow.appendChild(el('div', 'week-header', 'History'));
+  if (txs.length) {
+    const clearHistoryBtn = el('button', null, 'Clear History');
+    clearHistoryBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;';
+    clearHistoryBtn.onclick = async () => {
+      const today = houseDayKey(new Date());
+      const myTxs = accountTxsFor(profile.name);
+      const toClear = myTxs.filter(tx => houseDayKey(new Date(tx.timestamp)) !== today);
+      if (!toClear.length) { alert("Nothing to clear \u2014 everything showing is from today, and today's entries stay so your risk lockout still tracks correctly."); return; }
+      if (!confirm(`Clear ${toClear.length} older entr${toClear.length === 1 ? 'y' : 'ies'}? Today's entries stay put, and your balance stays exactly the same \u2014 it just collapses into one starting line.`)) return;
+      clearHistoryBtn.disabled = true; clearHistoryBtn.textContent = 'Clearing…';
+      const clearedNet = toClear.reduce((s,tx) => s + (tx.type === 'deposit' ? tx.amount : -tx.amount), 0);
+      const clearIds = new Set(toClear.map(tx => tx.id));
+      const before = allPicks;
+      let updated = allPicks.filter(p => !clearIds.has(p.id));
+      if (clearedNet !== 0) {
+        updated = updated.concat([{
+          id: profile.name + '_accounttx_carryover_' + Date.now(),
+          poolType: 'accountTx', player: profile.name,
+          type: clearedNet >= 0 ? 'deposit' : 'withdraw',
+          amount: Math.abs(clearedNet),
+          note: 'Balance carried over',
+          timestamp: new Date(Date.now() - 1000).toISOString()
+        }]);
+      }
+      allPicks = updated;
+      try { await savePicks(allPicks); render(); }
+      catch (e) {
+        allPicks = before;
+        alert("Couldn't clear history (" + describeFetchError(e) + ") — try again.");
+        clearHistoryBtn.disabled = false; clearHistoryBtn.textContent = 'Clear History';
+      }
+    };
+    historyHeaderRow.appendChild(clearHistoryBtn);
+  }
+  wrap.appendChild(historyHeaderRow);
   if (!txs.length) {
     wrap.appendChild(el('div', 'empty', 'No deposits or withdrawals yet.'));
   } else {
