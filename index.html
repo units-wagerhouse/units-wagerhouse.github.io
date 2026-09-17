@@ -27,7 +27,7 @@
   header.top h1 { font-size: 19px; font-weight: 800; margin: 0; letter-spacing: -0.01em; text-transform: uppercase; color: var(--text); }
   header.top h1 span { background: linear-gradient(135deg, #FFC629, #EF3B3B); -webkit-background-clip: text; background-clip: text; color: transparent; }
   .brand { display: flex; align-items: center; gap: 8px; }
-  .header-actions { display: flex; align-items: center; gap: 4px; margin-top: -4px; }
+  .header-actions { display: flex; align-items: center; gap: 4px; margin-top: -4px; margin-right: -5px; }
   header.top .who { font-size: 12px; color: var(--text-dim); }
   .menu-btn { background: none; border: none; color: var(--text); font-size: 24px; line-height: 1; padding: 4px 8px; cursor: pointer; height: 34px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; margin-left: -10px; }
   .friends-btn { background: none; border: none; padding: 4px 8px; cursor: pointer; height: 34px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; position: relative; }
@@ -857,7 +857,7 @@ function renderMenu() {
   else {
     balanceBtn.style.display = '';
     if (profile.unitSize && profile.dailyRiskDate === houseDayKey(new Date())) {
-      const unitsRemaining = Math.round((todaysRemainingBudget() / profile.unitSize) * 100) / 100;
+      const unitsRemaining = Math.floor(todaysRemainingBudget() / profile.unitSize);
       balanceBtn.textContent = unitsRemaining + ' Units';
     } else {
       balanceBtn.textContent = '$' + accountBalanceFor(profile.name).toFixed(2);
@@ -3245,7 +3245,7 @@ function renderPoolCard(pool) {
     card.style.background = won ? 'rgba(76, 175, 80, 0.08)' : 'rgba(239, 59, 59, 0.08)';
   }
   card.appendChild(el('div', null, pool.gameLabel)).style.cssText = 'font-size:13.5px;font-weight:700;margin-bottom:4px;';
-  const myUnitCost = profile.unitSize ? Math.round((pool.buyInDollars / profile.unitSize) * 100) / 100 : null;
+  const myUnitCost = profile.unitSize ? Math.ceil(pool.buyInDollars / profile.unitSize) : null;
   card.appendChild(el('div', null, `${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 $${pool.buyInDollars.toFixed(2)} buy-in${myUnitCost !== null ? ` (${myUnitCost}u for you)` : ''} \u00b7 ${pool.houseUnitsBudget} house units \u00b7 top ${pool.paidPositions} paid`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:6px;';
   const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 Friends only');
   card.appendChild(el('div', null, `Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
@@ -3383,7 +3383,7 @@ function renderPoolJoinForm(pool) {
   wrap.appendChild(el('div', null, `${totalUsed} / ${pool.houseUnitsBudget} house units used`)).style.cssText = 'font-size:12px;font-weight:700;color:var(--text-dim);margin-bottom:8px;';
 
   const errEl = el('div', 'pick-error');
-  const joinBtn = el('button', 'lock-btn', `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.round((pool.buyInDollars/profile.unitSize)*100)/100) + 'u' : ''})`);
+  const joinBtn = el('button', 'lock-btn', `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.ceil(pool.buyInDollars/profile.unitSize)) + 'u' : ''})`);
   joinBtn.onclick = async () => {
     if (!requireFunded('join a pool')) return;
     if (!requireDailyBudget('join a pool')) return;
@@ -3396,7 +3396,7 @@ function renderPoolJoinForm(pool) {
     joinBtn.disabled = true; joinBtn.textContent = 'Joining…';
     const picks = pool.legs.map(leg => ({ gameId: leg.gameId, betType: leg.betType, playerName: leg.playerName, statCategory: leg.statCategory, sideAbbr: poolJoinSides[poolLegKey(leg)], confUnits: poolJoinUnits[poolLegKey(leg)] || 0 })).filter(p => p.confUnits > 0);
     const idx = allPicks.findIndex(p => p.id === pool.id);
-    if (idx === -1) { errEl.textContent = 'Pool no longer exists.'; joinBtn.disabled = false; joinBtn.textContent = `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.round((pool.buyInDollars/profile.unitSize)*100)/100) + 'u' : ''})`; return; }
+    if (idx === -1) { errEl.textContent = 'Pool no longer exists.'; joinBtn.disabled = false; joinBtn.textContent = `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.ceil(pool.buyInDollars/profile.unitSize)) + 'u' : ''})`; return; }
     if (!allPicks[idx].participants) allPicks[idx].participants = [];
     allPicks[idx].participants.push({ name: profile.name, uid: profile.uid, picks, joinedAt: new Date().toISOString() });
     const reserveTx = {
@@ -3416,7 +3416,7 @@ function renderPoolJoinForm(pool) {
       allPicks[idx].participants.pop();
       allPicks.pop();
       errEl.textContent = "Couldn't join (" + describeFetchError(e) + ") — try again.";
-      joinBtn.disabled = false; joinBtn.textContent = `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.round((pool.buyInDollars/profile.unitSize)*100)/100) + 'u' : ''})`;
+      joinBtn.disabled = false; joinBtn.textContent = `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.ceil(pool.buyInDollars/profile.unitSize)) + 'u' : ''})`;
     }
   };
   wrap.appendChild(joinBtn);
@@ -3578,7 +3578,7 @@ function renderGolfSection() {
   const row2 = el('div'); row2.style.cssText = 'display:flex;align-items:center;gap:6px;';
   const unitsLabel = el('span', null, 'Units Staked'); unitsLabel.style.cssText = 'font-size:11px;color:var(--text-dim);font-weight:700;flex-shrink:0;';
   row2.appendChild(unitsLabel);
-  const unitsInput = el('input'); unitsInput.type = 'number'; unitsInput.min = '0.5'; unitsInput.step = '0.5'; unitsInput.value = '1'; unitsInput.placeholder = 'Units';
+  const unitsInput = el('input'); unitsInput.type = 'number'; unitsInput.min = '1'; unitsInput.step = '1'; unitsInput.value = '1'; unitsInput.placeholder = 'Units';
   unitsInput.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
   row2.appendChild(unitsInput);
   const visSel = el('select');
@@ -3600,7 +3600,7 @@ function renderGolfSection() {
     if (!requireFunded('create a challenge')) return;
     if (!requireDailyBudget('create a challenge')) return;
     if (!requireUnitSize('create a challenge')) return;
-    const units = parseFloat(unitsInput.value);
+    const units = Math.ceil(parseFloat(unitsInput.value));
     errEl.textContent = '';
     if (!selA.value || !selB.value || selA.value === selB.value) { errEl.textContent = 'Pick two different players.'; return; }
     if (!chosenPlayer) { errEl.textContent = 'Pick who you think wins.'; return; }
@@ -3765,7 +3765,7 @@ function renderChallengeRow(ch) {
   const isMine = ch.creator === profile.name;
   const mult = ch.oddsMultiplier || 1;
   const myStake = isMine ? ch.units : displayUnitsFor(ch);
-  const myPayout = isMine ? ch.units : Math.round(displayUnitsFor(ch) * mult * 100) / 100;
+  const myPayout = isMine ? ch.units : Math.ceil(displayUnitsFor(ch) * mult);
   const myRatio = isMine ? '1:1' : ratioLabel(mult);
   const myMarketTxt = isMine ? opponentSideView(ch) : marketTxt;
   const slipLabel = `${myMarketTxt} \u2014 \ud83d\udd25 ${myStake}u to win ${myPayout}u`;
@@ -3872,7 +3872,7 @@ function renderCounterForm(ch) {
   }
 
   wrap.appendChild(el('label', null, 'Units')).style.marginTop = '8px';
-  const unitsInput = el('input'); unitsInput.type = 'number'; unitsInput.min = '0.5'; unitsInput.step = '0.5'; unitsInput.value = ch.units;
+  const unitsInput = el('input'); unitsInput.type = 'number'; unitsInput.min = '1'; unitsInput.step = '1'; unitsInput.value = ch.units;
   unitsInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:7px 8px;font-size:13px;box-sizing:border-box;';
   wrap.appendChild(unitsInput);
 
@@ -3890,7 +3890,7 @@ function renderCounterForm(ch) {
     if (!requireFunded('counter a challenge')) return;
     if (!requireDailyBudget('counter a challenge')) return;
     if (!requireUnitSize('counter a challenge')) return;
-    const units = parseFloat(unitsInput.value);
+    const units = Math.ceil(parseFloat(unitsInput.value));
     errEl.textContent = '';
     if (!units || units <= 0) { errEl.textContent = 'Enter a valid unit amount.'; return; }
     let line = ch.line, spreadLabel = ch.spreadLabel;
@@ -4114,7 +4114,7 @@ function renderSwipeCard(ch) {
   const wasConverted = ch.status === 'open' && ch.creatorUnitSize && profile.unitSize && displayUnits !== ch.units;
   const origNote = originalTermsNote(ch);
   const mult = ch.oddsMultiplier || 1;
-  const payoutUnits = Math.round(displayUnits * mult * 100) / 100;
+  const payoutUnits = Math.ceil(displayUnits * mult);
   const marketTxtId = 'swipe-market-' + ch.id.replace(/[^a-zA-Z0-9]/g, '');
   bottom.innerHTML = `
     <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">If you accept, you get</div>
@@ -4390,22 +4390,22 @@ function renderExistingChallenges() {
   maxUnitsScroller.style.cssText = 'display:flex;gap:8px;padding:3px 0;align-items:center;';
   const minLabel = el('span', null, 'Units:'); minLabel.style.cssText = 'font-size:11px;color:var(--text-faint);font-weight:700;flex-shrink:0;';
   maxUnitsScroller.appendChild(minLabel);
-  const minInput = el('input'); minInput.type = 'number'; minInput.min = '0'; minInput.step = '0.5'; minInput.placeholder = 'No min'; minInput.id = 'openChallengeMinUnitsInput';
+  const minInput = el('input'); minInput.type = 'number'; minInput.min = '0'; minInput.step = '1'; minInput.placeholder = 'No min'; minInput.id = 'openChallengeMinUnitsInput';
   minInput.value = openChallengeMinUnits === null ? '' : openChallengeMinUnits;
   minInput.style.cssText = 'flex:0 0 auto;width:65px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 6px;font-size:12px;box-sizing:border-box;';
   const toLabel = el('span', null, 'to'); toLabel.style.cssText = 'font-size:11px;color:var(--text-faint);flex-shrink:0;';
-  const maxInput = el('input'); maxInput.type = 'number'; maxInput.min = '0'; maxInput.step = '0.5'; maxInput.placeholder = 'No max'; maxInput.id = 'openChallengeMaxUnitsInput';
+  const maxInput = el('input'); maxInput.type = 'number'; maxInput.min = '0'; maxInput.step = '1'; maxInput.placeholder = 'No max'; maxInput.id = 'openChallengeMaxUnitsInput';
   maxInput.value = openChallengeMaxUnits === null ? '' : openChallengeMaxUnits;
   maxInput.style.cssText = 'flex:0 0 auto;width:65px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 6px;font-size:12px;box-sizing:border-box;';
   minInput.addEventListener('input', () => {
-    openChallengeMinUnits = minInput.value === '' ? null : parseFloat(minInput.value);
+    openChallengeMinUnits = minInput.value === '' ? null : Math.ceil(parseFloat(minInput.value));
     swipeStackInitialized = false;
     clearTimeout(unitFilterDebounce);
     unitFilterDebounce = setTimeout(() => render(), 500);
   });
   minInput.addEventListener('blur', () => { clearTimeout(unitFilterDebounce); render(); });
   maxInput.addEventListener('input', () => {
-    openChallengeMaxUnits = maxInput.value === '' ? null : parseFloat(maxInput.value);
+    openChallengeMaxUnits = maxInput.value === '' ? null : Math.ceil(parseFloat(maxInput.value));
     swipeStackInitialized = false;
     clearTimeout(unitFilterDebounce);
     unitFilterDebounce = setTimeout(() => render(), 500);
@@ -4572,8 +4572,8 @@ function convertedUnitsForViewer(ch) {
   // What it would actually cost the current viewer to accept this, preserving real-dollar equivalence with
   // what the creator staked. Falls back to the raw unit count if either side hasn't set a unit size — there's
   // no dollar basis to convert from/to in that case, so we can't do better than showing the number as posted.
-  if (!ch.creatorUnitSize || !profile.unitSize) return ch.units;
-  return Math.round((ch.units * ch.creatorUnitSize / profile.unitSize) * 100) / 100;
+  if (!ch.creatorUnitSize || !profile.unitSize) return Math.ceil(ch.units);
+  return Math.ceil(ch.units * ch.creatorUnitSize / profile.unitSize);
 }
 function displayUnitsFor(ch) {
   const iAmCreator = ch.creator === profile.name;
@@ -4599,7 +4599,7 @@ function computeChallengeProfit(ch, iAmCreator) {
   const iWin = iAmCreator ? !offeredSideWon : offeredSideWon;
   const mult = ch.oddsMultiplier || 1;
   const myStake = iAmCreator ? ch.units : (ch.acceptorUnits != null ? ch.acceptorUnits : ch.units);
-  if (iWin) return iAmCreator ? myStake : myStake * mult;
+  if (iWin) return iAmCreator ? myStake : Math.ceil(myStake * mult);
   return -myStake;
 }
 
@@ -4953,7 +4953,7 @@ function renderGameCard(g, sport, meta) {
     const row2 = el('div'); row2.style.cssText = 'display:flex;align-items:center;gap:6px;';
     const unitsLabel = el('span', null, 'Units Staked'); unitsLabel.style.cssText = 'font-size:11px;color:var(--text-dim);font-weight:700;flex-shrink:0;';
     row2.appendChild(unitsLabel);
-    const unitsInput = el('input'); unitsInput.type = 'number'; unitsInput.min = '0.5'; unitsInput.step = '0.5'; unitsInput.value = '1'; unitsInput.placeholder = 'Units';
+    const unitsInput = el('input'); unitsInput.type = 'number'; unitsInput.min = '1'; unitsInput.step = '1'; unitsInput.value = '1'; unitsInput.placeholder = 'Units';
     unitsInput.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
     row2.appendChild(unitsInput);
     const visSel = el('select');
@@ -4976,7 +4976,7 @@ function renderGameCard(g, sport, meta) {
       if (!requireDailyBudget('create a challenge')) return;
       if (!requireUnitSize('create a challenge')) return;
       const side = selectedSide[key];
-      const units = parseFloat(unitsInput.value);
+      const units = Math.ceil(parseFloat(unitsInput.value));
       errEl.textContent = '';
       if (!side) { errEl.textContent = 'Pick a side first.'; return; }
       if (!units || units <= 0) { errEl.textContent = 'Enter a valid unit amount.'; return; }
@@ -5141,7 +5141,7 @@ function renderGameCard(g, sport, meta) {
     const row2 = el('div'); row2.style.cssText = 'display:flex;align-items:center;gap:6px;';
     const unitsLabel2 = el('span', null, 'Units Staked'); unitsLabel2.style.cssText = 'font-size:11px;color:var(--text-dim);font-weight:700;flex-shrink:0;';
     row2.appendChild(unitsLabel2);
-    const unitsInput2 = el('input'); unitsInput2.type = 'number'; unitsInput2.min = '0.5'; unitsInput2.step = '0.5'; unitsInput2.placeholder = 'Units';
+    const unitsInput2 = el('input'); unitsInput2.type = 'number'; unitsInput2.min = '1'; unitsInput2.step = '1'; unitsInput2.placeholder = 'Units';
     unitsInput2.id = 'propunits-' + g.id;
     unitsInput2.value = draft.units || '1';
     unitsInput2.oninput = () => { draft.units = unitsInput2.value; };
@@ -5172,7 +5172,7 @@ function renderGameCard(g, sport, meta) {
     if (!requireUnitSize('create a challenge')) return;
       const playerName = nameSel ? nameSel.value : (nameInput ? nameInput.value.trim() : '');
       const line = parseFloat(lineInput.value);
-      const units = parseFloat(unitsInput2.value);
+      const units = Math.ceil(parseFloat(unitsInput2.value));
       const chosenSide = draft.side;
       errEl2.textContent = '';
       if (!playerName) { errEl2.textContent = "Enter the player's name."; return; }
