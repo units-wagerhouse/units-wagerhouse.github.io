@@ -1354,18 +1354,22 @@ function incomingFriendRequests() {
 async function syncAcceptedFriendRequests() {
   if (!profile) return false;
   const myFriends = profile.friends || [];
-  const accepted = allPicks.filter(p => p.poolType === 'friendRequest' && p.status === 'accepted' && p.fromUid === profile.uid);
+  const accepted = allPicks.filter(p => p.poolType === 'friendRequest' && p.status === 'accepted' && p.fromUid === profile.uid && !p.synced);
+  if (!accepted.length) return false;
   const toAdd = [];
   accepted.forEach(req => {
     if (!myFriends.some(f => f.uid === req.toUid) && !toAdd.some(f => f.uid === req.toUid)) {
       toAdd.push({ uid: req.toUid, name: req.toName, username: req.toUsername });
     }
+    req.synced = true;
   });
-  if (!toAdd.length) return false;
-  const updated = [...myFriends, ...toAdd];
+  const updated = toAdd.length ? [...myFriends, ...toAdd] : myFriends;
   try {
-    await saveProfileDoc(profile.uid, { friends: updated });
-    saveProfile({ ...profile, friends: updated });
+    if (toAdd.length) {
+      await saveProfileDoc(profile.uid, { friends: updated });
+      saveProfile({ ...profile, friends: updated });
+    }
+    await savePicks(allPicks); // persist the synced flags either way, so this doesn't re-run forever
     return true;
   } catch (e) { return false; }
 }
