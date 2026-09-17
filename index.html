@@ -4204,9 +4204,13 @@ function renderExistingChallenges() {
   const all = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
   const stillActive = ch => ch.status === 'open';
   const friendNames = new Set((profile.friends || []).map(f => f.name));
-  const publicOpen = all.filter(ch => ch.visibility === 'public' && stillActive(ch));
-  const globalCount = publicOpen.length;
-  const friendsCount = publicOpen.filter(ch => friendNames.has(ch.creator)).length;
+  const cartIdsForCount = cartChallengeIdsFor(profile.name);
+  const declinedIdsForCount = declinedChallengeIdsFor(profile.name);
+  const publicOpenAll = all.filter(ch => ch.visibility === 'public' && stillActive(ch));
+  const publicOpen = publicOpenAll.filter(ch => ch.creator !== profile.name);
+  const reviewable = publicOpen.filter(ch => ch.acceptedBy !== profile.name && !cartIdsForCount.has(ch.id) && !declinedIdsForCount.has(ch.id));
+  const globalCount = reviewable.length;
+  const friendsCount = reviewable.filter(ch => friendNames.has(ch.creator)).length;
 
   const scopeToggle = el('div', 'league-scroller');
   [['global','Global',globalCount],['friends','Friends',friendsCount]].forEach(([id,label,count]) => {
