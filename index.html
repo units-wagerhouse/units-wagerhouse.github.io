@@ -23,11 +23,11 @@
   input, button { font-family: var(--font-head); }
 
   header.top { position: sticky; top: 0; z-index: 20; background: var(--bg); padding: 16px 16px 0; border-bottom: 1px solid var(--border); }
-  header.top .row1 { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+  header.top .row1 { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
   header.top h1 { font-size: 19px; font-weight: 800; margin: 0; letter-spacing: -0.01em; text-transform: uppercase; color: var(--text); }
   header.top h1 span { background: linear-gradient(135deg, #FFC629, #EF3B3B); -webkit-background-clip: text; background-clip: text; color: transparent; }
   .brand { display: flex; align-items: center; gap: 8px; }
-  .header-actions { display: flex; align-items: center; gap: 6px; margin-top: -4px; }
+  .header-actions { display: flex; align-items: center; gap: 6px; }
   header.top .who { font-size: 12px; color: var(--text-dim); }
   .menu-btn { background: none; border: none; color: var(--text); font-size: 22px; line-height: 1; padding: 4px 6px; cursor: pointer; height: 34px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
   .friends-btn { background: none; border: none; padding: 4px 6px; cursor: pointer; height: 34px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; position: relative; }
@@ -297,7 +297,7 @@ async function refreshGameLists() {
 
 let liveTimer = null;
 function startLiveScoreChecks() {
-  refreshGameLists().then(async () => { await persistNewlySettledPicks(); await persistNewlySettledWeeklyBets(); await persistNewlySettledPlayerProps(); await persistNewlySettledGolfH2H(); await persistNewlySettledComboPool(); await persistPoolPayoutToMe(); await persistAccountAdjustmentsForChallenges(); if (profile) render(); });
+  refreshGameLists().then(async () => { await persistNewlySettledPicks(); await persistNewlySettledWeeklyBets(); await persistNewlySettledPlayerProps(); await persistNewlySettledGolfH2H(); await ensurePoolPlayerPropBoxScores(); await persistNewlySettledComboPool(); await persistPoolPayoutToMe(); await persistAccountAdjustmentsForChallenges(); if (profile) render(); });
   if (liveTimer) return;
   liveTimer = setInterval(async () => {
     if (pendingSaveCount > 0) return; // don't rebuild the screen while a bet is mid-save
@@ -306,6 +306,7 @@ function startLiveScoreChecks() {
     const settledB = await persistNewlySettledWeeklyBets();
     const settledC = await persistNewlySettledPlayerProps();
     const settledD = await persistNewlySettledGolfH2H();
+    await ensurePoolPlayerPropBoxScores();
     const settledF = await persistNewlySettledComboPool();
     const settledG = await persistPoolPayoutToMe();
     const settledE = await persistAccountAdjustmentsForChallenges();
@@ -2955,7 +2956,7 @@ function renderPoolBuilder() {
       const row = el('div', 'pick-row');
       row.appendChild(el('div', 'who', leg.displayText));
       const rmBtn = el('button', null, '\u2715');
-      rmBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;width:26px;height:26px;font-size:12px;flex-shrink:0;';
+      rmBtn.style.cssText = 'flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;width:26px;height:26px;font-size:12px;';
       rmBtn.onclick = () => { poolBuilderLegs.splice(i, 1); render(); };
       row.appendChild(rmBtn);
       wrap.appendChild(row);
@@ -2979,6 +2980,21 @@ function renderPoolBuilder() {
   const marketSel = el('select');
   marketSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
   addCard.appendChild(marketSel);
+
+  const propFieldsWrap = el('div'); propFieldsWrap.style.cssText = 'display:none;';
+  propFieldsWrap.appendChild(el('label', null, 'Player'));
+  const propNameSel = el('select');
+  propNameSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+  propFieldsWrap.appendChild(propNameSel);
+  propFieldsWrap.appendChild(el('label', null, 'Stat'));
+  const propCatSel = el('select');
+  propCatSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+  propFieldsWrap.appendChild(propCatSel);
+  propFieldsWrap.appendChild(el('label', null, 'Line'));
+  const propLineInput = el('input'); propLineInput.type = 'number'; propLineInput.step = '0.5'; propLineInput.placeholder = 'e.g. 250.5';
+  propLineInput.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+  propFieldsWrap.appendChild(propLineInput);
+  addCard.appendChild(propFieldsWrap);
 
   function rebuildGameOptions() {
     const sport = leagueSel.value;
@@ -3008,9 +3024,31 @@ function renderPoolBuilder() {
     if (!moneylineOnly && spread !== null) { const o = document.createElement('option'); o.value = 'spread'; o.textContent = 'Spread'; marketSel.appendChild(o); }
     { const o = document.createElement('option'); o.value = 'moneyline'; o.textContent = 'Moneyline'; marketSel.appendChild(o); }
     if (!moneylineOnly && totalVal !== null && totalVal !== undefined) { const o = document.createElement('option'); o.value = 'total'; o.textContent = 'Total'; marketSel.appendChild(o); }
+    if (PLAYER_PROP_CATEGORIES.some(c => c.sport === sport)) { const o = document.createElement('option'); o.value = 'playerprop'; o.textContent = 'Player Prop'; marketSel.appendChild(o); }
+    updatePropFieldsVisibility();
+  }
+  function updatePropFieldsVisibility() {
+    const sport = leagueSel.value;
+    const g = currentGame();
+    if (marketSel.value !== 'playerprop' || !g) { propFieldsWrap.style.display = 'none'; return; }
+    propFieldsWrap.style.display = 'block';
+    propCatSel.innerHTML = '';
+    PLAYER_PROP_CATEGORIES.filter(c => c.sport === sport).forEach(c => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.label; propCatSel.appendChild(o); });
+    propNameSel.innerHTML = '<option value="">Loading players…</option>';
+    Promise.all([fetchTeamRoster(g.away, sport), fetchTeamRoster(g.home, sport)]).then(([awayRoster, homeRoster]) => {
+      propNameSel.innerHTML = '';
+      const blank = document.createElement('option'); blank.value = ''; blank.textContent = 'Select a player…'; propNameSel.appendChild(blank);
+      [[g.away, awayRoster], [g.home, homeRoster]].forEach(([abbr, roster]) => {
+        if (!roster || !roster.length) return;
+        const grp = document.createElement('optgroup'); grp.label = abbr;
+        roster.forEach(p => { const o = document.createElement('option'); o.value = p.name; o.textContent = `${p.name} (${p.position})`; grp.appendChild(o); });
+        propNameSel.appendChild(grp);
+      });
+    });
   }
   leagueSel.onchange = () => { rebuildGameOptions(); };
   gameSel.onchange = () => { rebuildMarketOptions(); };
+  marketSel.onchange = () => { updatePropFieldsVisibility(); };
   rebuildGameOptions();
 
   const addLegBtn = el('button', null, '+ Add to Pool');
@@ -3027,6 +3065,21 @@ function renderPoolBuilder() {
     if (!g) { addErr.textContent = 'No game selected.'; return; }
     const betType = marketSel.value;
     if (!betType) { addErr.textContent = 'No bet type available for this game.'; return; }
+    if (betType === 'playerprop') {
+      const playerName = propNameSel.value;
+      const statCategory = propCatSel.value;
+      const line = parseFloat(propLineInput.value);
+      if (!playerName) { addErr.textContent = "Select a player."; return; }
+      if (isNaN(line)) { addErr.textContent = 'Enter a line.'; return; }
+      if (poolBuilderLegs.some(l => l.gameId === g.id && l.betType === 'playerprop' && l.playerName === playerName && l.statCategory === statCategory)) { addErr.textContent = 'Already have this prop in the pool.'; return; }
+      const catLabel = (PLAYER_PROP_CATEGORIES.find(c => c.id === statCategory) || {}).label || statCategory;
+      poolBuilderLegs.push({
+        sport, gameId: g.id, gameLabel: g.away + ' @ ' + g.home, betType, playerName, statCategory, line,
+        displayText: `${fullTeamName2(sport, g, g.away)} @ ${fullTeamName2(sport, g, g.home)}: ${playerName} ${catLabel} (${line})`
+      });
+      render();
+      return;
+    }
     if (poolBuilderLegs.some(l => l.gameId === g.id && l.betType === betType)) { addErr.textContent = 'Already have this market for this game.'; return; }
     const marketLabel = betType === 'total' ? `Total (${g.overUnder})` : (betType === 'moneyline' ? 'Moneyline' : 'Spread');
     poolBuilderLegs.push({
@@ -3122,6 +3175,9 @@ function renderPoolBuilder() {
   return wrap;
 }
 function poolLegSideOptions(leg) {
+  if (leg.betType === 'playerprop') {
+    return [{ side: 'OVER', team: leg.playerName + ' Over', label: String(leg.line) }, { side: 'UNDER', team: leg.playerName + ' Under', label: String(leg.line) }];
+  }
   const g = (DATA[leg.sport] || []).find(x => x.id === leg.gameId);
   if (!g) return null;
   if (leg.betType === 'total') {
@@ -3149,6 +3205,22 @@ function poolParticipantScore(pool, participant) {
   participant.picks.forEach(pick => {
     const leg = pool.legs.find(l => l.gameId === pick.gameId && l.betType === pick.betType);
     if (!leg) return;
+    if (leg.betType === 'playerprop') {
+      const idx = gameIndex[leg.gameId];
+      const gameFinal = idx && idx.game && idx.game.status !== 'scheduled' && idx.game.status !== 'inprogress';
+      if (!gameFinal) { allSettled = false; return; }
+      const box = boxScoreCache[leg.gameId];
+      if (box === undefined) { allSettled = false; return; } // not fetched yet
+      if (!box) return; // fetch failed — void this leg, don't block the rest
+      const playerStats = findPlayerInBoxScore(box, leg.playerName);
+      if (!playerStats) return; // player not found in box score — void
+      const statVal = statValueFor(playerStats, leg.statCategory);
+      if (statVal === null || statVal === undefined) return; // stat unavailable — void
+      if (statVal === leg.line) return; // push
+      const hit = pick.sideAbbr === 'OVER' ? statVal > leg.line : statVal < leg.line;
+      if (hit) total += pick.confUnits; else total -= pick.confUnits;
+      return;
+    }
     const r = settlePick({ gameId: leg.gameId, betType: leg.betType, sideAbbr: pick.sideAbbr, line: leg.betType === 'total' ? ((DATA[leg.sport] || []).find(g => g.id === leg.gameId) || {}).overUnder : undefined });
     if (r.status === 'pending') { allSettled = false; return; }
     if (r.status === 'win') total += pick.confUnits;
@@ -3258,7 +3330,8 @@ function renderPoolJoinForm(pool) {
     const key = leg.gameId + '_' + leg.betType;
     const opts = poolLegSideOptions(leg);
     const legCard = el('div'); legCard.style.cssText = 'margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);';
-    legCard.appendChild(el('div', null, leg.gameLabel + ' \u2014 ' + (leg.betType === 'total' ? 'Total' : leg.betType === 'moneyline' ? 'Moneyline' : 'Spread'))).style.cssText = 'font-size:12px;font-weight:700;margin-bottom:6px;';
+    const legLabel = leg.betType === 'total' ? 'Total' : leg.betType === 'moneyline' ? 'Moneyline' : leg.betType === 'playerprop' ? `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory}` : 'Spread';
+    legCard.appendChild(el('div', null, leg.gameLabel + ' \u2014 ' + legLabel)).style.cssText = 'font-size:12px;font-weight:700;margin-bottom:6px;';
     if (!opts) { legCard.appendChild(el('div', 'empty', 'Game data unavailable right now.')); wrap.appendChild(legCard); return; }
     const sideGrid = el('div', 'outcome-grid');
     opts.forEach(so => {
@@ -5222,6 +5295,22 @@ function computePoolPayouts(pool) {
     i = j;
   }
   return payouts;
+}
+async function ensurePoolPlayerPropBoxScores() {
+  const pools = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool' && p.status === 'open' && (p.participants || []).length > 0);
+  const pairs = new Set();
+  pools.forEach(pool => {
+    pool.legs.forEach(leg => {
+      if (leg.betType !== 'playerprop') return;
+      const idx = gameIndex[leg.gameId];
+      const gameFinal = idx && idx.game && idx.game.status !== 'scheduled' && idx.game.status !== 'inprogress';
+      if (gameFinal && boxScoreCache[leg.gameId] === undefined) pairs.add(leg.sport + '|' + leg.gameId);
+    });
+  });
+  for (const pair of pairs) {
+    const [sport, gameId] = pair.split('|');
+    try { await fetchPlayerBoxScore(sport, gameId); } catch (e) { /* leave uncached, will retry next cycle */ }
+  }
 }
 async function persistNewlySettledComboPool() {
   let changed = false;
