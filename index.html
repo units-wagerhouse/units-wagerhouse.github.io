@@ -3107,6 +3107,9 @@ function renderPoolBuilder() {
       poolBuilderLegs = [];
       poolBuilderBuyIn = 5; poolBuilderBudget = 10; poolBuilderPaid = 1; poolBuilderVisibility = 'public';
       poolBuilderOpen = false;
+      poolsYourOpen = true;
+      poolJoinTarget = pool.id;
+      poolJoinSides = {}; poolJoinUnits = {};
       render();
     } catch (e) {
       allPicks.pop();
@@ -3133,6 +3136,12 @@ function poolLegSideOptions(leg) {
   const favLabel = magnitude === 0 ? 'PK' : '-' + magnitude;
   const udLabel = magnitude === 0 ? 'PK' : '+' + magnitude;
   return [g.away, g.home].map(ab => ({ side: ab, team: fullTeamName(g.id, ab), label: ab === favSide ? favLabel : udLabel }));
+}
+function poolAnyGameStarted(pool) {
+  return pool.legs.some(leg => {
+    const g = (DATA[leg.sport] || []).find(x => x.id === leg.gameId);
+    return !g || g.status !== 'scheduled'; // can't confirm it's still scheduled — treat as started to be safe
+  });
 }
 function poolParticipantScore(pool, participant) {
   let total = 0, allSettled = true;
@@ -3181,6 +3190,35 @@ function renderPoolCard(pool) {
     card.appendChild(el('div', 'no-odds-note', 'Pool settled \u2014 purse paid out.'));
   } else if (myEntry) {
     card.appendChild(el('div', 'no-odds-note', "You're in \u2014 waiting for games to finish."));
+    if (!poolAnyGameStarted(pool)) {
+      const leaveBtn = el('button', null, 'Leave Pool');
+      leaveBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:8px;font-size:12px;font-weight:700;';
+      leaveBtn.onclick = async () => {
+        if (!confirm('Leave this pool? Your buy-in will be refunded.')) return;
+        leaveBtn.disabled = true; leaveBtn.textContent = 'Leaving…';
+        const idx = allPicks.findIndex(p => p.id === pool.id);
+        if (idx === -1) return;
+        const before = JSON.parse(JSON.stringify(allPicks[idx]));
+        allPicks[idx].participants = (allPicks[idx].participants || []).filter(p => p.name !== profile.name);
+        const refundTx = {
+          id: profile.name + '_accounttx_poolleave_' + pool.id + '_' + Date.now(),
+          poolType: 'accountTx', player: profile.name,
+          type: 'deposit', amount: pool.buyInDollars,
+          note: `Buy-in refunded \u2014 left pool`,
+          relatedChallengeId: pool.id,
+          timestamp: new Date().toISOString()
+        };
+        allPicks.push(refundTx);
+        try { await savePicks(allPicks); render(); }
+        catch (e) {
+          allPicks[idx] = before;
+          allPicks.pop();
+          alert("Couldn't leave (" + describeFetchError(e) + ") — try again.");
+          leaveBtn.disabled = false; leaveBtn.textContent = 'Leave Pool';
+        }
+      };
+      card.appendChild(leaveBtn);
+    }
   } else {
     const joinBtn = el('button', 'lock-btn', `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.round((pool.buyInDollars/profile.unitSize)*100)/100) + 'u' : ''})`);
     joinBtn.onclick = () => { poolJoinTarget = poolJoinTarget === pool.id ? null : pool.id; poolJoinSides = {}; poolJoinUnits = {}; render(); };
