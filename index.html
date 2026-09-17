@@ -953,6 +953,7 @@ async function completeLoginSetup() {
         await cleanupAcceptedChallengesOnce();
         await cleanupAllOpenAndAcceptedChallengesOnce();
         await cleanupHouseChallengesOnce();
+        await resetMyAccountOnce();
       if (!players.includes(profile.name)) { players.push(profile.name); await savePlayers(players); }
       await refreshGameLists();
 
@@ -1325,43 +1326,7 @@ function renderAccountScreen() {
   withdrawBtn.onclick = () => recordTx('withdraw');
 
   const txs = accountTxsFor(profile.name).slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-  const historyHeaderRow = el('div'); historyHeaderRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
-  historyHeaderRow.appendChild(el('div', 'week-header', 'History'));
-  if (txs.length) {
-    const clearHistoryBtn = el('button', null, 'Clear History');
-    clearHistoryBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;';
-    clearHistoryBtn.onclick = async () => {
-      const today = houseDayKey(new Date());
-      const myTxs = accountTxsFor(profile.name);
-      const toClear = myTxs.filter(tx => houseDayKey(new Date(tx.timestamp)) !== today);
-      if (!toClear.length) { alert("Nothing to clear \u2014 everything showing is from today, and today's entries stay so your risk lockout still tracks correctly."); return; }
-      if (!confirm(`Clear ${toClear.length} older entr${toClear.length === 1 ? 'y' : 'ies'}? Today's entries stay put, and your balance stays exactly the same \u2014 it just collapses into one starting line.`)) return;
-      clearHistoryBtn.disabled = true; clearHistoryBtn.textContent = 'Clearing…';
-      const clearedNet = toClear.reduce((s,tx) => s + (tx.type === 'deposit' ? tx.amount : -tx.amount), 0);
-      const clearIds = new Set(toClear.map(tx => tx.id));
-      const before = allPicks;
-      let updated = allPicks.filter(p => !clearIds.has(p.id));
-      if (clearedNet !== 0) {
-        updated = updated.concat([{
-          id: profile.name + '_accounttx_carryover_' + Date.now(),
-          poolType: 'accountTx', player: profile.name,
-          type: clearedNet >= 0 ? 'deposit' : 'withdraw',
-          amount: Math.abs(clearedNet),
-          note: 'Balance carried over',
-          timestamp: new Date(Date.now() - 1000).toISOString()
-        }]);
-      }
-      allPicks = updated;
-      try { await savePicks(allPicks); render(); }
-      catch (e) {
-        allPicks = before;
-        alert("Couldn't clear history (" + describeFetchError(e) + ") — try again.");
-        clearHistoryBtn.disabled = false; clearHistoryBtn.textContent = 'Clear History';
-      }
-    };
-    historyHeaderRow.appendChild(clearHistoryBtn);
-  }
-  wrap.appendChild(historyHeaderRow);
+  wrap.appendChild(el('div', 'week-header', 'History'));
   if (!txs.length) {
     wrap.appendChild(el('div', 'empty', 'No deposits or withdrawals yet.'));
   } else {
@@ -5386,6 +5351,20 @@ async function cleanupAcceptedChallengesOnce() {
   }
   try { localStorage.setItem(FLAG, '1'); } catch (e) {}
 }
+async function resetMyAccountOnce() {
+  const FLAG = 'ww_reset_account_v1';
+  try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
+  const myTxIds = new Set(accountTxsFor(profile.name).map(tx => tx.id));
+  if (myTxIds.size) {
+    allPicks = allPicks.filter(p => !(p.poolType === 'accountTx' && myTxIds.has(p.id)));
+    try { await savePicks(allPicks); } catch (e) { return; /* retry next load if save failed */ }
+  }
+  try {
+    await saveProfileDoc(profile.uid, { dailyRiskDate: null, dailyRiskAmount: null, unitSize: null });
+    saveProfile({ ...profile, dailyRiskDate: null, dailyRiskAmount: null, unitSize: null });
+  } catch (e) { return; }
+  try { localStorage.setItem(FLAG, '1'); } catch (e) {}
+}
 async function cleanupHouseChallengesOnce() {
   const FLAG = 'ww_cleanup_house_challenges_v1';
   try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
@@ -5888,6 +5867,7 @@ function renderLeaderboard() {
         await cleanupAcceptedChallengesOnce();
         await cleanupAllOpenAndAcceptedChallengesOnce();
         await cleanupHouseChallengesOnce();
+        await resetMyAccountOnce();
         if (!players.includes(profile.name)) { players.push(profile.name); await savePlayers(players); }
         await refreshGameLists();
 
