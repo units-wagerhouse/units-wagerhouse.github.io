@@ -1325,7 +1325,7 @@ function renderAccountScreen() {
   depositBtn.onclick = () => recordTx('deposit');
   withdrawBtn.onclick = () => recordTx('withdraw');
 
-  const txs = accountTxsFor(profile.name).slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const txs = accountTxsFor(profile.name).filter(tx => !tx.relatedChallengeId).slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
   wrap.appendChild(el('div', 'week-header', 'History'));
   if (!txs.length) {
     wrap.appendChild(el('div', 'empty', 'No deposits or withdrawals yet.'));
@@ -1333,7 +1333,7 @@ function renderAccountScreen() {
     txs.forEach(tx => {
       const row = el('div', 'pick-row');
       const left = el('div');
-      left.appendChild(el('div', 'who', tx.relatedChallengeId ? (tx.note || 'Bet') : (tx.type === 'deposit' ? 'Deposit' : 'Withdrawal')));
+      left.appendChild(el('div', 'who', tx.type === 'deposit' ? 'Deposit' : 'Withdrawal'));
       left.appendChild(el('div', 'detail', new Date(tx.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })));
       row.appendChild(left);
       const amtEl = el('div', null, (tx.type === 'deposit' ? '+' : '-') + '$' + tx.amount.toFixed(2));
