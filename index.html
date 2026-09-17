@@ -4182,9 +4182,21 @@ function renderExistingChallenges() {
 }
 
 function renderRequestedSection() {
+  const all = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
+  const stillActive = ch => ch.status === 'open';
+  const friendNames = new Set((profile.friends || []).map(f => f.name));
+  const globalCount = all.filter(ch => ch.visibility === 'public' && stillActive(ch)).length;
+  const friendsCount = all.filter(ch => stillActive(ch) && (
+    (ch.visibility === 'public' && friendNames.has(ch.creator)) ||
+    (ch.visibility === 'friend' && (ch.creator === profile.name || ch.targetFriend === profile.name))
+  )).length;
+  const mineCount = all.filter(ch => ch.creator === profile.name && stillActive(ch)).length;
+  const viewCounts = { global: globalCount, friends: friendsCount, mine: mineCount };
+
   const toggle = el('div', 'league-scroller');
   [['global','Global'],['friends','Friends'],['mine','Mine']].forEach(([id,label]) => {
-    const pill = el('button', 'league-pill' + (existingChallengeView === id ? ' active' : ''), label);
+    const count = viewCounts[id];
+    const pill = el('button', 'league-pill' + (existingChallengeView === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
     pill.style.position = 'relative';
     pill.onclick = () => { existingChallengeView = id; challengeBrowseMode = 'swipe'; swipeStackInitialized = false; render(); };
     if (id === 'friends' && unseenPendingFriendChallenges().length > 0) {
@@ -4194,9 +4206,6 @@ function renderRequestedSection() {
     toggle.appendChild(pill);
   });
 
-  const all = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
-  const stillActive = ch => ch.status === 'open';
-  const friendNames = new Set((profile.friends || []).map(f => f.name));
   let byView;
   if (existingChallengeView === 'global') {
     byView = all.filter(ch => ch.visibility === 'public' && stillActive(ch));
@@ -4229,9 +4238,14 @@ function renderRequestedSection() {
   wrap.appendChild(toggle);
 
   if (existingChallengeView === 'friends') {
+    const friendsGlobal = list.filter(ch => ch.visibility === 'public');
+    const friendsDirect = list.filter(ch => ch.visibility === 'friend');
+    const subCounts = { global: friendsGlobal.length, toyou: friendsDirect.length };
+
     const friendsSubScroller = el('div', 'league-scroller');
     [['global','To Everyone'],['toyou','To You']].forEach(([id,label]) => {
-      const pill = el('button', 'league-pill' + (friendsSubFilter === id ? ' active' : ''), label);
+      const count = subCounts[id];
+      const pill = el('button', 'league-pill' + (friendsSubFilter === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
       pill.style.position = 'relative';
       pill.onclick = () => { friendsSubFilter = id; swipeStackInitialized = false; if (id === 'toyou') markFriendChallengesSeen(); render(); };
       if (id === 'toyou' && unseenPendingFriendChallenges().length > 0) {
@@ -4241,8 +4255,6 @@ function renderRequestedSection() {
       friendsSubScroller.appendChild(pill);
     });
 
-    const friendsGlobal = list.filter(ch => ch.visibility === 'public');
-    const friendsDirect = list.filter(ch => ch.visibility === 'friend');
     const activeFriendsList = (friendsSubFilter === 'global' ? friendsGlobal : friendsDirect)
       .slice().sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)); // received order — oldest first
 
