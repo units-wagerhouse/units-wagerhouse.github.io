@@ -332,7 +332,7 @@ let trackerDateFilter = 'all'; // 'week' | 'month' | 'year' | 'all' | a specific
 let trackerLeagueFilter = null; // sport id or null
 let trackerTeamFilter = null; // team abbr or null
 let trackerBetTypeFilter = 'all'; // 'all' | 'spread' | 'total' | 'moneyline' | 'parlay'
-let existingChallengeView = 'global'; // 'global' | 'friends'
+let existingChallengeView = 'friends'; // 'friends' | 'mine'
 let challengeBrowseMode = 'swipe'; // 'swipe' | 'cart'
 let swipeStackInitialized = false;
 let swipeStack = [];
@@ -354,12 +354,13 @@ let completedChallengesOpen = false;
 let acceptedChallengeLeague = null; // sport id or null
 let acceptedChallengeDateFilter = 'all'; // 'today' | 'week' | 'month' | 'year' | 'all'
 let openChallengeLeague = null; // sport id or null
+let openChallengeGameFilter = null; // gameId or null
+let openChallengeScope = 'global'; // 'global' | 'friends'
 let openChallengeDateFilter = 'today'; // 'today' | 'tomorrow' | 'week'
 let openChallengeTypeFilter = 'all'; // 'all' | 'spread' | 'total' | 'player' | 'golf'
 let openChallengeMinUnits = null; // null = no floor
 let unitFilterDebounce = null;
 let counterFormOpen = {};
-let friendsSubFilter = 'global'; // 'global' | 'toyou'
 let mineGlobalOpen = false;
 let mineDirectOpen = false;
 let minimizedGameCards = {};
@@ -800,6 +801,20 @@ function renderInner() {
   renderSectionSwitch();
   const main = document.getElementById('main');
   main.innerHTML = '';
+  if (autoMatchNotice) {
+    const banner = el('div');
+    const isFriend = autoMatchNotice.isFriend;
+    banner.style.cssText = `background:${isFriend ? 'var(--accent-dark)' : 'var(--surface)'};border:1px solid ${isFriend ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;`;
+    const msg = el('div', null, `${isFriend ? '\ud83e\udd1d' : '\u2705'} Auto-matched with ${autoMatchNotice.creator}'s challenge!`);
+    msg.style.cssText = 'font-size:12.5px;font-weight:700;color:var(--text);';
+    banner.appendChild(msg);
+    const dismissBtn = el('button', null, '\u2715');
+    dismissBtn.style.cssText = 'background:none;border:none;color:var(--text-faint);font-size:14px;flex-shrink:0;';
+    dismissBtn.onclick = () => { autoMatchNotice = null; render(); };
+    banner.appendChild(dismissBtn);
+    main.appendChild(banner);
+    setTimeout(() => { if (autoMatchNotice) { autoMatchNotice = null; render(); } }, 5000);
+  }
   if (!profile) { document.getElementById('tabbar').innerHTML = ''; main.appendChild(renderSetup()); window.scrollTo(0, scrollY); return; }
   if (profile.dailyRiskDate !== houseDayKey(new Date()) && appSection !== 'account') {
     document.getElementById('tabbar').innerHTML = '';
@@ -939,7 +954,7 @@ async function completeLoginSetup() {
   players = g.players; allPicks = g.picks; dailySlateData = g.dailySlate;
   appSection = 'pools';
   activeTab = 'existing';
-  existingChallengeView = 'global';
+  existingChallengeView = 'friends';
   challengeBrowseMode = 'swipe';
   openChallengeLeague = null;
   openChallengeTypeFilter = 'all';
@@ -1346,6 +1361,10 @@ function renderAccountScreen() {
 }
 
 let friendSearchQuery = '';
+let groupBuilderOpen = false;
+let groupBuilderName = '';
+let groupBuilderMemberUids = new Set();
+let autoMatchNotice = null; // { creator, isFriend } | null
 let friendsAllProfilesLoaded = false;
 let friendProfileView = null; // uid of a friend whose profile card is expanded
 function incomingFriendRequests() {
@@ -1443,6 +1462,99 @@ function renderFriendsScreen() {
       row.appendChild(left);
       wrap.appendChild(row);
     });
+  }
+
+  // ---- friend groups ----
+  const myGroups = allPicks.filter(p => p.poolType === 'friendGroup' && (p.members || []).some(m => m.uid === profile.uid));
+  wrap.appendChild(el('div', 'week-header', `Friend Groups (${myGroups.length})`));
+  myGroups.forEach(grp => {
+    const row = el('div', 'pick-row');
+    const left = el('div');
+    left.appendChild(el('div', 'who', grp.name));
+    left.appendChild(el('div', 'detail', grp.members.map(m => m.name).join(', ')));
+    row.appendChild(left);
+    if (grp.creatorUid === profile.uid) {
+      const delBtn = el('button', null, '\u2715');
+      delBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;width:28px;height:28px;font-size:12px;flex-shrink:0;';
+      delBtn.onclick = async () => {
+        if (!confirm(`Delete the group "${grp.name}"?`)) return;
+        const idx = allPicks.findIndex(p => p.id === grp.id);
+        if (idx === -1) return;
+        const removed = allPicks.splice(idx, 1)[0];
+        try { await savePicks(allPicks); render(); }
+        catch (e) { allPicks.splice(idx, 0, removed); alert("Couldn't delete (" + describeFetchError(e) + ") — try again."); }
+      };
+      row.appendChild(delBtn);
+    }
+    wrap.appendChild(row);
+  });
+
+  const groupToggleBtn = el('button', null, groupBuilderOpen ? '\u2212 Cancel' : '+ Create Group');
+  groupToggleBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px dashed var(--accent);color:var(--accent);border-radius:8px;padding:10px;font-size:12.5px;font-weight:700;';
+  groupToggleBtn.onclick = () => { groupBuilderOpen = !groupBuilderOpen; groupBuilderName = ''; groupBuilderMemberUids = new Set(); render(); };
+  wrap.appendChild(groupToggleBtn);
+
+  if (groupBuilderOpen) {
+    const groupCard = el('div', 'setup-card');
+    groupCard.style.marginTop = '8px';
+    groupCard.appendChild(el('label', null, 'Group name'));
+    const nameInput = el('input'); nameInput.placeholder = 'e.g. Fantasy League'; nameInput.value = groupBuilderName;
+    nameInput.oninput = () => { groupBuilderName = nameInput.value; };
+    groupCard.appendChild(nameInput);
+    groupCard.appendChild(el('label', null, 'Members')).style.marginTop = '10px';
+    if (!myFriends.length) {
+      groupCard.appendChild(el('div', 'empty', 'Add some friends first before building a group.'));
+    } else {
+      myFriends.forEach(f => {
+        const row = el('div', 'pick-row');
+        row.style.cursor = 'pointer';
+        const left = el('div');
+        left.appendChild(el('div', 'who', f.name));
+        left.appendChild(el('div', 'detail', '@' + f.username));
+        row.appendChild(left);
+        const checkSpan = el('div', null, groupBuilderMemberUids.has(f.uid) ? '\u2713' : '');
+        checkSpan.style.cssText = 'width:24px;text-align:center;font-size:14px;color:var(--accent);font-weight:800;flex-shrink:0;';
+        row.appendChild(checkSpan);
+        row.onclick = () => {
+          if (groupBuilderMemberUids.has(f.uid)) groupBuilderMemberUids.delete(f.uid);
+          else groupBuilderMemberUids.add(f.uid);
+          render();
+        };
+        groupCard.appendChild(row);
+      });
+    }
+    const groupErr = el('div', 'pick-error');
+    const createGroupBtn = el('button', 'lock-btn', 'Create Group');
+    createGroupBtn.style.marginTop = '10px';
+    groupCard.appendChild(createGroupBtn);
+    groupCard.appendChild(groupErr);
+    wrap.appendChild(groupCard);
+
+    createGroupBtn.onclick = async () => {
+      const name = groupBuilderName.trim();
+      groupErr.textContent = '';
+      if (!name) { groupErr.textContent = 'Enter a group name.'; return; }
+      if (groupBuilderMemberUids.size < 1) { groupErr.textContent = 'Pick at least 1 friend.'; return; }
+      const memberList = [{ uid: profile.uid, name: profile.name, username: profile.username }];
+      myFriends.forEach(f => { if (groupBuilderMemberUids.has(f.uid)) memberList.push({ uid: f.uid, name: f.name, username: f.username }); });
+      const group = {
+        id: profile.name + '_group_' + Date.now(),
+        poolType: 'friendGroup', creator: profile.name, creatorUid: profile.uid,
+        name, members: memberList,
+        timestamp: new Date().toISOString()
+      };
+      createGroupBtn.disabled = true; createGroupBtn.textContent = 'Creating…';
+      allPicks.push(group);
+      try {
+        await savePicks(allPicks);
+        groupBuilderOpen = false; groupBuilderName = ''; groupBuilderMemberUids = new Set();
+        render();
+      } catch (e) {
+        allPicks.pop();
+        groupErr.textContent = "Couldn't create (" + describeFetchError(e) + ") — try again.";
+        createGroupBtn.disabled = false; createGroupBtn.textContent = 'Create Group';
+      }
+    };
   }
 
   // ---- search ----
@@ -2150,7 +2262,7 @@ function renderPoolsSection() {
   const yourPools = allPools.filter(p => p.creator === profile.name && p.status !== 'settled');
   const friendNames = new Set((profile.friends || []).map(f => f.name));
   const openPools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && (
-    p.visibility === 'public' || (p.visibility === 'friend' && friendNames.has(p.creator))
+    p.visibility === 'public' || (p.visibility === 'friend' && friendNames.has(p.creator)) || isMyGroupChallenge(p)
   ));
 
   const yourHeader = el('div', 'week-header', `${poolsYourOpen ? '\u25be' : '\u25b8'} Your Pools (${yourPools.length})`);
@@ -2834,7 +2946,7 @@ function renderKalshiSection() {
 function renderPoolBuilder() {
   const wrap = el('div', 'setup-card');
   wrap.appendChild(el('div', null, 'Build Your Own Pool')).style.cssText = 'font-size:14px;font-weight:800;margin-bottom:4px;';
-  wrap.appendChild(el('div', 'setup-hint', "Add at least 5 games and pick a bet type for each (no side \u2014 that's up to whoever joins). Everyone who joins pays the buy-in, gets the same house-unit budget to spread across their own picks on your games, and whoever ends up most positive wins the purse. Ties split evenly."));
+  wrap.appendChild(el('div', 'setup-hint', "Add as many games as you want and pick a bet type for each (no side \u2014 that's up to whoever joins). Everyone who joins pays the buy-in, gets the same house-unit budget to spread across their own picks on your games, and whoever ends up most positive wins the purse. Ties split evenly."));
 
   if (poolBuilderLegs.length) {
     poolBuilderLegs.forEach((leg, i) => {
@@ -2922,17 +3034,18 @@ function renderPoolBuilder() {
     render();
   };
 
-  if (poolBuilderLegs.length < 5) {
-    wrap.appendChild(el('div', 'setup-hint', `Add at least 5 games to post a pool (${poolBuilderLegs.length}/5 so far).`));
+  if (poolBuilderLegs.length < 1) {
+    wrap.appendChild(el('div', 'setup-hint', 'Add as many games as you want to post a pool.'));
     return wrap;
   }
 
   const cfgCard = el('div'); cfgCard.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
-  cfgCard.appendChild(el('label', null, 'Buy-in (units per person)'));
+  cfgCard.appendChild(el('label', null, 'Buy-in Cost ($)'));
   const buyInInput = el('input'); buyInInput.type = 'number'; buyInInput.min = '0.5'; buyInInput.step = '0.5'; buyInInput.value = String(poolBuilderBuyIn);
   buyInInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
   buyInInput.oninput = () => { poolBuilderBuyIn = buyInInput.value; };
   cfgCard.appendChild(buyInInput);
+  cfgCard.appendChild(el('div', 'setup-hint', "Set in real dollars \u2014 whoever joins pays this same dollar amount, converted to their own units automatically."));
 
   cfgCard.appendChild(el('label', null, 'House units per person (for picking, not real money)'));
   const budgetInput = el('input'); budgetInput.type = 'number'; budgetInput.min = '1'; budgetInput.step = '1'; budgetInput.value = String(poolBuilderBudget);
@@ -2950,6 +3063,7 @@ function renderPoolBuilder() {
   const visSel = el('select');
   visSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;box-sizing:border-box;';
   [['public','\ud83d\udce2 Anyone (public)'],['friend','\ud83d\udc64 Friends only']].forEach(([v,l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; visSel.appendChild(o); });
+  (allPicks.filter(p => p.poolType === 'friendGroup' && (p.members||[]).some(m=>m.uid===profile.uid))).forEach(grp => { const o = document.createElement('option'); o.value = 'group:' + grp.id; o.textContent = '\ud83d\udc65 ' + grp.name; visSel.appendChild(o); });
   visSel.value = poolBuilderVisibility;
   visSel.onchange = () => { poolBuilderVisibility = visSel.value; };
   cfgCard.appendChild(visSel);
@@ -2965,21 +3079,23 @@ function renderPoolBuilder() {
     if (!requireFunded('create a pool')) return;
     if (!requireDailyBudget('create a pool')) return;
     if (!requireUnitSize('create a pool')) return;
-    const buyInUnits = parseFloat(buyInInput.value);
+    const buyInDollars = parseFloat(buyInInput.value);
     const houseUnitsBudget = parseFloat(budgetInput.value);
     const paidPositions = parseInt(paidInput.value, 10);
     submitErr.textContent = '';
-    if (!buyInUnits || buyInUnits <= 0) { submitErr.textContent = 'Enter a valid buy-in.'; return; }
+    if (!buyInDollars || buyInDollars <= 0) { submitErr.textContent = 'Enter a valid buy-in.'; return; }
     if (!houseUnitsBudget || houseUnitsBudget <= 0) { submitErr.textContent = 'Enter a valid house-unit budget.'; return; }
     if (!paidPositions || paidPositions < 1) { submitErr.textContent = 'Enter at least 1 paid position.'; return; }
+    const rawVis = visSel.value;
+    const poolGroupId = rawVis.startsWith('group:') ? rawVis.slice(6) : null;
     const pool = {
       id: profile.name + '_pool_' + Date.now(),
       poolType: 'challenge', propType: 'combo_pool', creator: profile.name,
       sport: poolBuilderLegs[0].sport, gameLabel: poolBuilderLegs.map(l => l.gameLabel).join(' + '),
       legs: poolBuilderLegs.slice(),
-      buyInUnits, houseUnitsBudget, paidPositions,
+      buyInDollars, houseUnitsBudget, paidPositions,
       creatorUnitSize: profile.unitSize || null,
-      visibility: visSel.value,
+      visibility: poolGroupId ? 'group' : rawVis, groupId: poolGroupId,
       status: 'open', participants: [],
       timestamp: new Date().toISOString()
     };
@@ -3041,8 +3157,10 @@ function renderPoolCard(pool) {
     card.style.background = won ? 'rgba(76, 175, 80, 0.08)' : 'rgba(239, 59, 59, 0.08)';
   }
   card.appendChild(el('div', null, pool.gameLabel)).style.cssText = 'font-size:13.5px;font-weight:700;margin-bottom:4px;';
-  card.appendChild(el('div', null, `${pool.legs.length} games \u00b7 ${pool.buyInUnits}u buy-in \u00b7 ${pool.houseUnitsBudget} house units \u00b7 top ${pool.paidPositions} paid`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:6px;';
-  card.appendChild(el('div', null, `Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${pool.visibility === 'public' ? '\ud83d\udce2 Public' : '\ud83d\udc64 Friends only'}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
+  const myUnitCost = profile.unitSize ? Math.round((pool.buyInDollars / profile.unitSize) * 100) / 100 : null;
+  card.appendChild(el('div', null, `${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 $${pool.buyInDollars.toFixed(2)} buy-in${myUnitCost !== null ? ` (${myUnitCost}u for you)` : ''} \u00b7 ${pool.houseUnitsBudget} house units \u00b7 top ${pool.paidPositions} paid`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:6px;';
+  const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 Friends only');
+  card.appendChild(el('div', null, `Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
 
   // leaderboard, once at least one participant has a fully-settled score
   if (participants.length) {
@@ -3065,7 +3183,7 @@ function renderPoolCard(pool) {
   } else if (isCreator) {
     card.appendChild(el('div', 'no-odds-note', "You created this pool."));
   } else {
-    const joinBtn = el('button', 'lock-btn', `Join Pool (${pool.buyInUnits}u buy-in)`);
+    const joinBtn = el('button', 'lock-btn', `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.round((pool.buyInDollars/profile.unitSize)*100)/100) + 'u' : ''})`);
     joinBtn.onclick = () => { poolJoinTarget = poolJoinTarget === pool.id ? null : pool.id; poolJoinSides = {}; poolJoinUnits = {}; render(); };
     card.appendChild(joinBtn);
   }
@@ -3130,7 +3248,7 @@ function renderPoolJoinForm(pool) {
   wrap.appendChild(el('div', null, `${totalUsed} / ${pool.houseUnitsBudget} house units used`)).style.cssText = 'font-size:12px;font-weight:700;color:var(--text-dim);margin-bottom:8px;';
 
   const errEl = el('div', 'pick-error');
-  const joinBtn = el('button', 'lock-btn', `Join Pool (${pool.buyInUnits}u buy-in)`);
+  const joinBtn = el('button', 'lock-btn', `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.round((pool.buyInDollars/profile.unitSize)*100)/100) + 'u' : ''})`);
   joinBtn.onclick = async () => {
     if (!requireFunded('join a pool')) return;
     if (!requireDailyBudget('join a pool')) return;
@@ -3143,13 +3261,13 @@ function renderPoolJoinForm(pool) {
     joinBtn.disabled = true; joinBtn.textContent = 'Joining…';
     const picks = pool.legs.map(leg => ({ gameId: leg.gameId, betType: leg.betType, sideAbbr: poolJoinSides[leg.gameId + '_' + leg.betType], confUnits: poolJoinUnits[leg.gameId + '_' + leg.betType] || 0 })).filter(p => p.confUnits > 0);
     const idx = allPicks.findIndex(p => p.id === pool.id);
-    if (idx === -1) { errEl.textContent = 'Pool no longer exists.'; joinBtn.disabled = false; joinBtn.textContent = `Join Pool (${pool.buyInUnits}u buy-in)`; return; }
+    if (idx === -1) { errEl.textContent = 'Pool no longer exists.'; joinBtn.disabled = false; joinBtn.textContent = `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.round((pool.buyInDollars/profile.unitSize)*100)/100) + 'u' : ''})`; return; }
     if (!allPicks[idx].participants) allPicks[idx].participants = [];
     allPicks[idx].participants.push({ name: profile.name, uid: profile.uid, picks, joinedAt: new Date().toISOString() });
     const reserveTx = {
       id: profile.name + '_accounttx_pooljoin_' + pool.id,
       poolType: 'accountTx', player: profile.name,
-      type: 'withdraw', amount: pool.buyInUnits * profile.unitSize,
+      type: 'withdraw', amount: pool.buyInDollars,
       note: `Pool buy-in \u2014 ${pool.gameLabel}`,
       relatedChallengeId: pool.id,
       timestamp: new Date().toISOString()
@@ -3163,7 +3281,7 @@ function renderPoolJoinForm(pool) {
       allPicks[idx].participants.pop();
       allPicks.pop();
       errEl.textContent = "Couldn't join (" + describeFetchError(e) + ") — try again.";
-      joinBtn.disabled = false; joinBtn.textContent = `Join Pool (${pool.buyInUnits}u buy-in)`;
+      joinBtn.disabled = false; joinBtn.textContent = `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.round((pool.buyInDollars/profile.unitSize)*100)/100) + 'u' : ''})`;
     }
   };
   wrap.appendChild(joinBtn);
@@ -3332,6 +3450,7 @@ function renderGolfSection() {
   visSel.style.cssText = 'flex:0 0 auto;width:134px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
   const publicOpt = document.createElement('option'); publicOpt.value = ''; publicOpt.textContent = '\ud83d\udce2 Post publicly'; visSel.appendChild(publicOpt);
   (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel.appendChild(o); });
+  (allPicks.filter(p => p.poolType === 'friendGroup' && (p.members||[]).some(m=>m.uid===profile.uid))).forEach(grp => { const o = document.createElement('option'); o.value = 'group:' + grp.id; o.textContent = '\ud83d\udc65 ' + grp.name; visSel.appendChild(o); });
   row2.appendChild(visSel);
   slip.appendChild(row2);
 
@@ -3353,6 +3472,7 @@ function renderGolfSection() {
     if (!units || units <= 0) { errEl.textContent = 'Enter a valid unit amount.'; return; }
     const displaySide = chosenPlayer === selA.value ? selB.value : selA.value; // acceptor gets the opposite pick
     const friend = visSel.value || null;
+    const groupId = friend && friend.startsWith('group:') ? friend.slice(6) : null;
     const challenge = {
       id: profile.name + '_challenge_golf_' + field.tournamentId + '_' + Date.now(),
       poolType: 'challenge', propType: 'golf_h2h', creator: profile.name,
@@ -3360,8 +3480,8 @@ function renderGolfSection() {
       playerA: selA.value, playerB: selB.value, sideAbbr: displaySide, units, round: roundSel.value,
       oddsMultiplier, originalOddsMultiplier: 1,
       creatorUnitSize: profile.unitSize || null,
-      visibility: friend ? 'friend' : 'public',
-      targetFriend: friend, status: 'open', acceptedBy: null,
+      visibility: groupId ? 'group' : (friend ? 'friend' : 'public'),
+      groupId, targetFriend: groupId ? null : friend, status: 'open', acceptedBy: null,
       timestamp: new Date().toISOString()
     };
     createBtn.disabled = true; createBtn.textContent = 'Saving…';
@@ -3520,8 +3640,10 @@ function renderChallengeRow(ch) {
 
   if (ch.status === 'open') {
     if (ch.creator === profile.name) {
-      card.appendChild(el('div', 'no-odds-note', ch.visibility === 'public' ? `Posted ${postedDate} — waiting for someone to accept` : `Posted ${postedDate} — Sent to ${ch.targetFriend} — waiting for a response`));
-    } else if (ch.visibility === 'friend' && ch.targetFriend === profile.name) {
+      const groupName = ch.visibility === 'group' ? ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === ch.groupId) || {}).name || 'group') : null;
+      const sentToText = ch.visibility === 'group' ? `Sent to ${groupName}` : `Sent to ${ch.targetFriend}`;
+      card.appendChild(el('div', 'no-odds-note', ch.visibility === 'public' ? `Posted ${postedDate} — waiting for someone to accept` : `Posted ${postedDate} — ${sentToText} — waiting for a response`));
+    } else if ((ch.visibility === 'friend' && ch.targetFriend === profile.name) || isMyGroupChallenge(ch)) {
       card.appendChild(el('div', null, `From ${ch.creator} \u2014 ${postedDate}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
       const row = el('div'); row.style.cssText = 'display:flex;gap:8px;';
       const acceptBtn = el('button', 'lock-btn', 'Accept'); acceptBtn.style.flex = '1';
@@ -4050,8 +4172,16 @@ function renderSwipeCart() {
   return wrap;
 }
 
+function isMyGroupChallenge(ch) {
+  if (ch.visibility !== 'group' || !ch.groupId) return false;
+  const grp = allPicks.find(p => p.poolType === 'friendGroup' && p.id === ch.groupId);
+  return !!(grp && (grp.members || []).some(m => m.uid === profile.uid));
+}
 function pendingFriendChallengesForMe() {
-  return allPicks.filter(p => p.poolType === 'challenge' && p.visibility === 'friend' && p.targetFriend === profile.name && p.status === 'open');
+  return allPicks.filter(p => p.poolType === 'challenge' && p.status === 'open' && p.creator !== profile.name && (
+    (p.visibility === 'friend' && p.targetFriend === profile.name) ||
+    isMyGroupChallenge(p)
+  ));
 }
 let seenFriendChallengeIds = null;
 function getSeenFriendChallengeIds() {
@@ -4073,7 +4203,19 @@ function markFriendChallengesSeen() {
 function renderExistingChallenges() {
   const all = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
   const stillActive = ch => ch.status === 'open';
-  const byView = all.filter(ch => ch.visibility === 'public' && stillActive(ch));
+  const friendNames = new Set((profile.friends || []).map(f => f.name));
+  const publicOpen = all.filter(ch => ch.visibility === 'public' && stillActive(ch));
+  const globalCount = publicOpen.length;
+  const friendsCount = publicOpen.filter(ch => friendNames.has(ch.creator)).length;
+
+  const scopeToggle = el('div', 'league-scroller');
+  [['global','Global',globalCount],['friends','Friends',friendsCount]].forEach(([id,label,count]) => {
+    const pill = el('button', 'league-pill' + (openChallengeScope === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
+    pill.onclick = () => { openChallengeScope = id; swipeStackInitialized = false; render(); };
+    scopeToggle.appendChild(pill);
+  });
+
+  const byView = openChallengeScope === 'friends' ? publicOpen.filter(ch => friendNames.has(ch.creator)) : publicOpen;
 
   let leagueScroller = el('div', 'league-scroller');
   const allPill = el('button', 'league-pill' + (openChallengeLeague === null ? ' active' : ''), 'All leagues');
@@ -4137,12 +4279,8 @@ function renderExistingChallenges() {
   const byLeague = openChallengeLeague === null ? byView : byView.filter(ch => ch.sport === openChallengeLeague);
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const byDate = byLeague.filter(ch => {
-    let gd = null;
-    const idx = gameIndex[ch.gameId];
-    if (idx && idx.game && idx.game.start) gd = new Date(idx.game.start);
-    else if (ch.propType === 'golf_h2h' && golfFieldCache && golfFieldCache.tournamentId === ch.tournamentId && golfFieldCache.date) gd = new Date(golfFieldCache.date);
-    if (!gd) return true; // no resolvable date at all — don't hide it
+  const matchesDateFilter = (gd) => {
+    if (!gd) return true;
     if (openChallengeDateFilter === 'today') {
       return gd.getFullYear() === now.getFullYear() && gd.getMonth() === now.getMonth() && gd.getDate() === now.getDate();
     }
@@ -4152,8 +4290,36 @@ function renderExistingChallenges() {
     }
     const weekEnd = new Date(startOfToday); weekEnd.setDate(weekEnd.getDate() + 7);
     return gd >= startOfToday && gd < weekEnd;
+  };
+  const byDate = byLeague.filter(ch => {
+    let gd = null;
+    const idx = gameIndex[ch.gameId];
+    if (idx && idx.game && idx.game.start) gd = new Date(idx.game.start);
+    else if (ch.propType === 'golf_h2h' && golfFieldCache && golfFieldCache.tournamentId === ch.tournamentId && golfFieldCache.date) gd = new Date(golfFieldCache.date);
+    if (!gd) return true; // no resolvable date at all — don't hide it
+    return matchesDateFilter(gd);
   });
-  const byType = openChallengeTypeFilter === 'all' ? byDate : byDate.filter(ch => {
+
+  let gameFilterRow = null;
+  if (openChallengeLeague !== null && openChallengeLeague !== (LEAGUES_META.find(l=>l.isGolf)||{}).id) {
+    const gamesInScope = (DATA[openChallengeLeague] || []).filter(g => g.status === 'scheduled' && matchesDateFilter(new Date(g.start)));
+    if (!gamesInScope.some(g => g.id === openChallengeGameFilter)) openChallengeGameFilter = null;
+    gameFilterRow = el('div'); gameFilterRow.style.cssText = 'padding:3px 0;';
+    const gameSel = el('select');
+    gameSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:12.5px;box-sizing:border-box;';
+    const allOpt = document.createElement('option'); allOpt.value = ''; allOpt.textContent = 'All Games'; gameSel.appendChild(allOpt);
+    gamesInScope.slice().sort((a,b) => new Date(a.start) - new Date(b.start)).forEach(g => {
+      const o = document.createElement('option'); o.value = g.id;
+      o.textContent = `${fullTeamName(g.id, g.away)} @ ${fullTeamName(g.id, g.home)}`;
+      if (g.id === openChallengeGameFilter) o.selected = true;
+      gameSel.appendChild(o);
+    });
+    gameSel.onchange = () => { openChallengeGameFilter = gameSel.value || null; swipeStackInitialized = false; render(); };
+    gameFilterRow.appendChild(gameSel);
+  }
+  const byGame = (openChallengeGameFilter && gameFilterRow) ? byDate.filter(ch => ch.gameId === openChallengeGameFilter) : byDate;
+
+  const byType = openChallengeTypeFilter === 'all' ? byGame : byGame.filter(ch => {
     if (openChallengeTypeFilter === 'player') return ch.propType === 'player';
     if (openChallengeTypeFilter === 'moneyline') return ch.propType === 'golf_h2h' || ch.betType === 'moneyline' || (ch.betType === 'spread' && !ch.propType && !ch.spreadLabel);
     if (openChallengeTypeFilter === 'spread') return !ch.propType && ch.betType === 'spread' && !!ch.spreadLabel;
@@ -4178,27 +4344,25 @@ function renderExistingChallenges() {
   if (challengeBrowseMode === 'cart') {
     return renderSwipeCart();
   }
-  return renderSwipeMode([leagueScroller, dateScroller, typeScroller, maxUnitsScroller]);
+  const rows = [leagueScroller, dateScroller];
+  if (gameFilterRow) rows.push(gameFilterRow);
+  rows.push(typeScroller, maxUnitsScroller, scopeToggle);
+  return renderSwipeMode(rows);
 }
 
 function renderRequestedSection() {
   const all = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
   const stillActive = ch => ch.status === 'open';
-  const friendNames = new Set((profile.friends || []).map(f => f.name));
-  const globalCount = all.filter(ch => ch.visibility === 'public' && stillActive(ch)).length;
-  const friendsCount = all.filter(ch => stillActive(ch) && (
-    (ch.visibility === 'public' && friendNames.has(ch.creator)) ||
-    (ch.visibility === 'friend' && (ch.creator === profile.name || ch.targetFriend === profile.name))
-  )).length;
+  const friendsCount = all.filter(ch => (ch.visibility === 'friend' && ch.targetFriend === profile.name || isMyGroupChallenge(ch)) && ch.creator !== profile.name && stillActive(ch)).length;
   const mineCount = all.filter(ch => ch.creator === profile.name && stillActive(ch)).length;
-  const viewCounts = { global: globalCount, friends: friendsCount, mine: mineCount };
+  const viewCounts = { friends: friendsCount, mine: mineCount };
 
   const toggle = el('div', 'league-scroller');
-  [['global','Global'],['friends','Friends'],['mine','Mine']].forEach(([id,label]) => {
+  [['friends','Friends'],['mine','Mine']].forEach(([id,label]) => {
     const count = viewCounts[id];
     const pill = el('button', 'league-pill' + (existingChallengeView === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
     pill.style.position = 'relative';
-    pill.onclick = () => { existingChallengeView = id; challengeBrowseMode = 'swipe'; swipeStackInitialized = false; render(); };
+    pill.onclick = () => { existingChallengeView = id; challengeBrowseMode = 'swipe'; swipeStackInitialized = false; if (id === 'friends') markFriendChallengesSeen(); render(); };
     if (id === 'friends' && unseenPendingFriendChallenges().length > 0) {
       const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
       pill.appendChild(dot);
@@ -4207,19 +4371,14 @@ function renderRequestedSection() {
   });
 
   let byView;
-  if (existingChallengeView === 'global') {
-    byView = all.filter(ch => ch.visibility === 'public' && stillActive(ch));
-  } else if (existingChallengeView === 'friends') {
-    byView = all.filter(ch => stillActive(ch) && (
-      (ch.visibility === 'public' && friendNames.has(ch.creator)) ||
-      (ch.visibility === 'friend' && (ch.creator === profile.name || ch.targetFriend === profile.name))
-    ));
-  } else {
+  if (existingChallengeView === 'mine') {
     byView = all.filter(ch => ch.creator === profile.name && stillActive(ch));
+  } else {
+    byView = all.filter(ch => (ch.visibility === 'friend' && ch.targetFriend === profile.name || isMyGroupChallenge(ch)) && ch.creator !== profile.name && stillActive(ch));
   }
-  const list = byView.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const list = byView.slice().sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)); // received order — oldest first
 
-  if (existingChallengeView === 'global') {
+  if (existingChallengeView !== 'mine') {
     if (!swipeStackInitialized) {
       const persistedCartIds = cartChallengeIdsFor(profile.name);
       swipeCart = all.filter(ch => persistedCartIds.has(ch.id) && ch.status === 'open');
@@ -4236,41 +4395,6 @@ function renderRequestedSection() {
 
   const wrap = el('div');
   wrap.appendChild(toggle);
-
-  if (existingChallengeView === 'friends') {
-    const friendsGlobal = list.filter(ch => ch.visibility === 'public');
-    const friendsDirect = list.filter(ch => ch.visibility === 'friend');
-    const subCounts = { global: friendsGlobal.length, toyou: friendsDirect.length };
-
-    const friendsSubScroller = el('div', 'league-scroller');
-    [['global','To Everyone'],['toyou','To You']].forEach(([id,label]) => {
-      const count = subCounts[id];
-      const pill = el('button', 'league-pill' + (friendsSubFilter === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
-      pill.style.position = 'relative';
-      pill.onclick = () => { friendsSubFilter = id; swipeStackInitialized = false; if (id === 'toyou') markFriendChallengesSeen(); render(); };
-      if (id === 'toyou' && unseenPendingFriendChallenges().length > 0) {
-        const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
-        pill.appendChild(dot);
-      }
-      friendsSubScroller.appendChild(pill);
-    });
-
-    const activeFriendsList = (friendsSubFilter === 'global' ? friendsGlobal : friendsDirect)
-      .slice().sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)); // received order — oldest first
-
-    if (!swipeStackInitialized) {
-      const persistedCartIds = cartChallengeIdsFor(profile.name);
-      swipeCart = all.filter(ch => persistedCartIds.has(ch.id) && ch.status === 'open');
-      const cartIds = new Set(swipeCart.map(c => c.id));
-      const declinedIds = declinedChallengeIdsFor(profile.name);
-      swipeStack = activeFriendsList.filter(ch => ch.creator !== profile.name && ch.acceptedBy !== profile.name && !cartIds.has(ch.id) && !declinedIds.has(ch.id));
-      swipeStackInitialized = true;
-    }
-    if (challengeBrowseMode === 'cart') {
-      return renderSwipeCart();
-    }
-    return renderSwipeMode([toggle, friendsSubScroller]);
-  }
 
   const mineGlobal = list.filter(ch => ch.visibility === 'public');
   const mineDirect = list.filter(ch => ch.visibility === 'friend');
@@ -4361,7 +4485,7 @@ function renderCompletedChallenges() {
   }
 
   const dateScroller = el('div', 'league-scroller');
-  [['today','Today'],['week','This Week'],['month','This Month'],['year','This Year'],['all','All-time']].forEach(([id,label]) => {
+  [['today','Today'],['week','This Week'],['month','This Month'],['year','This Year'],['all','All']].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (acceptedChallengeDateFilter === id ? ' active' : ''), label);
     pill.onclick = () => { acceptedChallengeDateFilter = id; render(); };
     dateScroller.appendChild(pill);
@@ -4697,6 +4821,7 @@ function renderGameCard(g, sport, meta) {
     visSel.style.cssText = 'flex:0 0 auto;width:134px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
     const publicOpt = document.createElement('option'); publicOpt.value = ''; publicOpt.textContent = '\ud83d\udce2 Post publicly'; visSel.appendChild(publicOpt);
     (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel.appendChild(o); });
+    (allPicks.filter(p => p.poolType === 'friendGroup' && (p.members||[]).some(m=>m.uid===profile.uid))).forEach(grp => { const o = document.createElement('option'); o.value = 'group:' + grp.id; o.textContent = '\ud83d\udc65 ' + grp.name; visSel.appendChild(o); });
     row2.appendChild(visSel);
     slip.appendChild(row2);
 
@@ -4710,14 +4835,14 @@ function renderGameCard(g, sport, meta) {
     createBtn.onclick = async () => {
       if (!requireFunded('create a challenge')) return;
       if (!requireDailyBudget('create a challenge')) return;
-    if (!requireDailyBudget('create a challenge')) return;
-    if (!requireUnitSize('create a challenge')) return;
+      if (!requireUnitSize('create a challenge')) return;
       const side = selectedSide[key];
       const units = parseFloat(unitsInput.value);
       errEl.textContent = '';
       if (!side) { errEl.textContent = 'Pick a side first.'; return; }
       if (!units || units <= 0) { errEl.textContent = 'Enter a valid unit amount.'; return; }
       const friend = visSel.value || null;
+      const groupId = friend && friend.startsWith('group:') ? friend.slice(6) : null;
       const displaySide = betType === 'total' ? (side === 'OVER' ? 'UNDER' : 'OVER') : (side === g.home ? g.away : g.home);
       let line, spreadLabel;
       if (betType === 'total') {
@@ -4732,6 +4857,28 @@ function renderGameCard(g, sport, meta) {
         spreadLabel = magnitude === 0 ? 'PK' : (isFav ? '-' + magnitude : '+' + magnitude);
         line = magnitude === 0 ? 0 : (isFav ? -magnitude : magnitude);
       }
+
+      // Auto-match: if someone already has an open challenge offering exactly what I'd be left holding,
+      // accept theirs instead of posting a duplicate that could never both get accepted.
+      const mySide = side; // the side the ACCEPTOR of my new challenge would NOT get — i.e. what I'd hold myself
+      const candidates = allPicks.filter(p => p.poolType === 'challenge' && p.status === 'open' && p.creator !== profile.name &&
+        !p.propType && p.sport === sport && p.gameId === g.id && p.betType === betType &&
+        p.sideAbbr === mySide &&
+        (betType === 'total' ? p.line === line : (betType === 'moneyline' ? true : p.line === -line)));
+      if (candidates.length) {
+        let chosen = candidates[0];
+        const globalCandidate = candidates.find(p => p.visibility === 'public');
+        const friendCandidate = candidates.find(p => p.visibility === 'friend' && p.targetFriend === profile.name);
+        if (candidates.length > 1 && globalCandidate && friendCandidate) {
+          const wantsFriend = confirm(`Would you like to accept the global request, or the request posted by ${friendCandidate.creator}?\n\nOK = ${friendCandidate.creator}'s request\nCancel = the global request`);
+          chosen = wantsFriend ? friendCandidate : globalCandidate;
+        }
+        createBtn.disabled = true; createBtn.textContent = 'Matching…';
+        autoMatchNotice = { creator: chosen.creator, isFriend: chosen.visibility === 'friend' || chosen.visibility === 'group' };
+        await acceptChallenge(chosen);
+        return;
+      }
+
       let originalLine = null, originalSpreadLabel = null;
       if (defaultMagnitude !== null) {
         if (betType === 'total') {
@@ -4750,8 +4897,8 @@ function renderGameCard(g, sport, meta) {
         oddsMultiplier: (betType === 'spread' || betType === 'moneyline') ? oddsMultiplier : 1,
         originalLine, originalSpreadLabel, originalOddsMultiplier: 1,
         creatorUnitSize: profile.unitSize || null,
-        visibility: friend ? 'friend' : 'public',
-        targetFriend: friend, status: 'open', acceptedBy: null,
+        visibility: groupId ? 'group' : (friend ? 'friend' : 'public'),
+        groupId, targetFriend: groupId ? null : friend, status: 'open', acceptedBy: null,
         timestamp: new Date().toISOString()
       };
       createBtn.disabled = true; createBtn.textContent = 'Saving…';
@@ -4865,6 +5012,7 @@ function renderGameCard(g, sport, meta) {
     visSel2.style.cssText = 'flex:0 0 auto;width:134px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
     const publicOpt2 = document.createElement('option'); publicOpt2.value = ''; publicOpt2.textContent = '\ud83d\udce2 Post publicly'; visSel2.appendChild(publicOpt2);
     (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel2.appendChild(o); });
+    (allPicks.filter(p => p.poolType === 'friendGroup' && (p.members||[]).some(m=>m.uid===profile.uid))).forEach(grp => { const o = document.createElement('option'); o.value = 'group:' + grp.id; o.textContent = '\ud83d\udc65 ' + grp.name; visSel2.appendChild(o); });
     visSel2.value = draft.visibility || '';
     visSel2.onchange = () => { draft.visibility = visSel2.value; };
     row2.appendChild(visSel2);
@@ -4894,14 +5042,15 @@ function renderGameCard(g, sport, meta) {
       if (!units || units <= 0) { errEl2.textContent = 'Enter a valid unit amount.'; return; }
       const displaySide = chosenSide === 'OVER' ? 'UNDER' : 'OVER';
       const friend = visSel2.value || null;
+      const groupId = friend && friend.startsWith('group:') ? friend.slice(6) : null;
       const challenge = {
         id: profile.name + '_challenge_' + g.id + '_playerprop_' + Date.now(),
         poolType: 'challenge', propType: 'player', creator: profile.name,
         sport, gameId: g.id, gameLabel: g.away + ' @ ' + g.home,
         playerName, statCategory: catSel.value, sideAbbr: displaySide, line, units,
         creatorUnitSize: profile.unitSize || null,
-        visibility: friend ? 'friend' : 'public',
-        targetFriend: friend, status: 'open', acceptedBy: null,
+        visibility: groupId ? 'group' : (friend ? 'friend' : 'public'),
+        groupId, targetFriend: groupId ? null : friend, status: 'open', acceptedBy: null,
         timestamp: new Date().toISOString()
       };
       createBtn2.disabled = true; createBtn2.textContent = 'Saving…';
@@ -5009,7 +5158,7 @@ function computePoolPayouts(pool) {
   if (!participants.length) return [];
   const scored = participants.map(p => ({ name: p.name, ...poolParticipantScore(pool, p) }));
   if (scored.some(s => !s.allSettled)) return null; // not everyone's games are final yet
-  const purse = pool.buyInUnits * participants.length;
+  const purse = pool.buyInDollars * participants.length;
   const perSlot = purse / pool.paidPositions;
   scored.sort((a,b) => b.total - a.total);
   const payouts = [];
@@ -5055,7 +5204,7 @@ async function persistPoolPayoutToMe() {
       const tx = {
         id: profile.name + '_accounttx_poolpayout_' + pool.id,
         poolType: 'accountTx', player: profile.name,
-        type: 'deposit', amount: payout.amount * profile.unitSize,
+        type: 'deposit', amount: payout.amount,
         note: `Pool payout \u2014 ${pool.gameLabel}`,
         relatedChallengeId: pool.id,
         timestamp: new Date().toISOString()
@@ -5851,7 +6000,7 @@ function renderLeaderboard() {
   loadSession();
   appSection = 'pools';
   activeTab = 'existing';
-  existingChallengeView = 'global';
+  existingChallengeView = 'friends';
   challengeBrowseMode = 'swipe';
   openChallengeLeague = null;
   openChallengeTypeFilter = 'all';
