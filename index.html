@@ -1985,45 +1985,6 @@ function renderDailyOptionCard(opt, remaining, fullSlate, usedMulligan) {
   }
   if (remaining <= 0) { card.appendChild(el('div', 'no-odds-note', 'Bank empty this week')); return card; }
 
-  if (!usedMulligan) {
-    const mullWrap = el('div');
-    mullWrap.style.cssText = 'margin-bottom:10px;';
-    const mullToggleBtn = el('button', null, '\ud83d\udd04 Swap this pick (mulligan)');
-    mullToggleBtn.style.cssText = 'width:100%;background:none;border:1px dashed var(--border);color:var(--text-dim);border-radius:6px;padding:9px;font-size:12px;font-weight:700;';
-    const swapPanel = el('div');
-    swapPanel.style.cssText = 'display:none;margin-top:8px;';
-    const alreadyUsedKeys = new Set(fullSlate.map(o => o.gameId + '_' + o.betType));
-    const alternatives = dailyOptionPool().filter(o => !alreadyUsedKeys.has(o.gameId + '_' + o.betType));
-    const altSel = el('select');
-    altSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:9px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
-    if (!alternatives.length) {
-      swapPanel.appendChild(el('div', 'no-odds-note', 'No other options available to swap in today.'));
-    } else {
-      alternatives.forEach((o,i) => { const op = document.createElement('option'); op.value = String(i); op.textContent = `${o.gameLabel} — ${o.betType === 'spread' ? 'Spread' : 'Total'}`; altSel.appendChild(op); });
-      swapPanel.appendChild(altSel);
-      const confirmBtn = el('button', 'lock-btn', 'Confirm swap');
-      confirmBtn.onclick = async () => {
-        const chosen = alternatives[parseInt(altSel.value, 10)];
-        const mullRecord = {
-          id: profile.name + '_mulligan_' + wk,
-          poolType: 'mulligan', player: profile.name, dayKey: wk,
-          replacedGameId: opt.gameId, replacedBetType: opt.betType,
-          newOption: chosen,
-          timestamp: new Date().toISOString()
-        };
-        confirmBtn.disabled = true; confirmBtn.textContent = 'Saving…';
-        allPicks.push(mullRecord);
-        try { await savePicks(allPicks); render(); }
-        catch (e) { allPicks.pop(); confirmBtn.disabled = false; confirmBtn.textContent = 'Confirm swap'; alert("Couldn't save (" + describeFetchError(e) + ") — try again."); }
-      };
-      swapPanel.appendChild(confirmBtn);
-    }
-    mullToggleBtn.onclick = () => { swapPanel.style.display = swapPanel.style.display === 'none' ? 'block' : 'none'; };
-    mullWrap.appendChild(mullToggleBtn);
-    mullWrap.appendChild(swapPanel);
-    card.appendChild(mullWrap);
-  }
-
   const key = opt.gameId + '_' + opt.betType;
   const sideKey = 'house_' + key;
 
@@ -2264,7 +2225,7 @@ function renderDailyChallenge() {
     const usedMulligan = !!mulliganFor(profile.name, wk);
     options.forEach(opt => wrap.appendChild(renderDailyOptionCard(opt, remaining, options, usedMulligan)));
   }
-  wrap.appendChild(el('div', 'refresh-note', `${HOUSE_BANK_TOTAL} house units a day, spread across a random daily slate of 5 picks — one mulligan a day to swap a pick you don't like. Up to ${HOUSE_BET_CAP}u on any one pick. Units lock once a game starts. Units reset every day.`));
+  wrap.appendChild(el('div', 'refresh-note', `${HOUSE_BANK_TOTAL} house units a day, spread across a random daily slate of 5 picks. Up to ${HOUSE_BET_CAP}u on any one pick. Units lock once a game starts. Units reset every day.`));
   return wrap;
 }
 
@@ -3068,6 +3029,10 @@ function renderPoolBuilder() {
   visSel.value = poolBuilderVisibility;
   visSel.onchange = () => { poolBuilderVisibility = visSel.value; };
   cfgCard.appendChild(visSel);
+  const goToGroupsLink = el('div', null, "Don't see a group? Create one on the Friends page \u2192");
+  goToGroupsLink.style.cssText = 'font-size:11px;color:var(--accent);font-weight:700;cursor:pointer;margin-top:6px;';
+  goToGroupsLink.onclick = () => { appSection = 'friends'; render(); };
+  cfgCard.appendChild(goToGroupsLink);
   wrap.appendChild(cfgCard);
 
   const submitBtn = el('button', 'lock-btn', 'Submit Pool');
@@ -3303,7 +3268,15 @@ function renderPoolJoinForm(pool) {
   wrap.style.cssText = 'margin-top:10px;background:var(--surface-2);border-radius:8px;padding:10px;';
   wrap.appendChild(el('div', null, 'Make your picks')).style.cssText = 'font-size:12px;font-weight:800;margin-bottom:8px;color:var(--text-dim);';
 
-  let totalUsed = 0;
+  // Ensure every leg has a default (and is clamped to its cap) before computing anything that depends on the totals.
+  pool.legs.forEach(leg => {
+    const key = poolLegKey(pool.id, leg);
+    const maxPerPick = pool.maxUnitsPerPick || pool.houseUnitsBudget;
+    if (poolJoinUnits[key] === undefined) poolJoinUnits[key] = 1; // every pick starts with at least 1 unit of weight
+    if (poolJoinUnits[key] > maxPerPick) poolJoinUnits[key] = maxPerPick;
+  });
+  const grandTotal = pool.legs.reduce((s, leg) => s + (poolJoinUnits[poolLegKey(pool.id, leg)] || 1), 0);
+  let totalUsed = grandTotal;
   pool.legs.forEach(leg => {
     const key = poolLegKey(pool.id, leg);
     const opts = poolLegSideOptions(leg);
@@ -3322,11 +3295,8 @@ function renderPoolJoinForm(pool) {
 
     const confRow = el('div'); confRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;';
     const maxPerPick = pool.maxUnitsPerPick || pool.houseUnitsBudget;
-    if (poolJoinUnits[key] === undefined) poolJoinUnits[key] = 1; // every pick starts with at least 1 unit of weight
-    if (poolJoinUnits[key] > maxPerPick) poolJoinUnits[key] = maxPerPick;
     const u = poolJoinUnits[key];
-    totalUsed += u;
-    const remaining = pool.houseUnitsBudget - (totalUsed - u);
+    const remaining = pool.houseUnitsBudget - (grandTotal - u); // budget left for THIS leg, accounting for every other leg's current allocation
     const minusBtn = el('button', null, '\u2212'); minusBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;width:32px;height:32px;font-size:14px;';
     minusBtn.disabled = u <= 1;
     minusBtn.onclick = () => { poolJoinUnits[key] = Math.max(1, (poolJoinUnits[key] || 1) - 1); render(); };
