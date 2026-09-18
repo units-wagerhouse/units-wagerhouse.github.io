@@ -204,7 +204,7 @@ const ESPN_PATHS = {
 async function fetchSportGames(sport) {
   const { sport: espnSport, league } = ESPN_PATHS[sport];
   const now = new Date();
-  const dateStrs = [0, 1, 2, 3, 4, 5, 6].map(offset => {
+  const dateStrs = [-1, 0, 1, 2, 3, 4, 5, 6].map(offset => {
     const d = new Date(now);
     d.setDate(d.getDate() + offset);
     return d.toISOString().slice(0, 10).replace(/-/g, '');
@@ -357,11 +357,9 @@ let acceptedChallengeLeague = null; // sport id or null
 let acceptedChallengeDateFilter = 'all'; // 'today' | 'week' | 'month' | 'year' | 'all'
 let openChallengeLeague = null; // sport id or null
 let openChallengeGameFilter = null; // gameId or null
-let openChallengeScope = 'global'; // 'global' | 'friends'
+let openChallengePriceTier = 'all'; // 'all' | '1' | '2' | '3' | '4'
 let openChallengeDateFilter = 'week'; // 'today' | 'tomorrow' | 'week'
 let openChallengeTypeFilter = 'all'; // 'all' | 'spread' | 'total' | 'player' | 'golf'
-let openChallengeMinUnits = null; // null = no floor
-let unitFilterDebounce = null;
 let counterFormOpen = {};
 let mineGlobalOpen = false;
 let mineDirectOpen = false;
@@ -409,7 +407,6 @@ let poolBuilderBudget = 10;
 let poolBuilderMaxPerPick = 10;
 let poolBuilderPaid = 1;
 let poolBuilderVisibility = 'public';
-let openChallengeMaxUnits = null; // null = no cap
 let challengeTypeSelection = {}; // gameId -> 'spread' | 'total' | 'playerprop'
 
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
@@ -4380,6 +4377,14 @@ function renderExistingChallenges() {
     if (ch.propType === 'golf_h2h' && golfFieldCache && golfFieldCache.tournamentId === ch.tournamentId && golfFieldCache.date) return new Date(golfFieldCache.date);
     return null;
   }
+  function matchesPriceTier(units, tier) {
+    if (tier === 'all') return true;
+    if (tier === '1') return units >= 1 && units <= 25;
+    if (tier === '2') return units >= 26 && units <= 50;
+    if (tier === '3') return units >= 51 && units <= 75;
+    if (tier === '4') return units >= 76 && units <= 100;
+    return true;
+  }
   function matchesTypeVal(ch, typeVal) {
     if (typeVal === 'all') return true;
     if (typeVal === 'player') return ch.propType === 'player';
@@ -4390,32 +4395,17 @@ function renderExistingChallenges() {
   // Applies every filter, letting one dimension be overridden — used to compute "if I picked this option instead,
   // holding everything else the same, how many would show" for every filter box's live count.
   function applyFilters(o) {
-    const scopeVal = 'scope' in o ? o.scope : openChallengeScope;
     const leagueVal = 'league' in o ? o.league : openChallengeLeague;
     const dateVal = 'date' in o ? o.date : openChallengeDateFilter;
     const typeVal = 'type' in o ? o.type : openChallengeTypeFilter;
-    const minVal = 'min' in o ? o.min : openChallengeMinUnits;
-    const maxVal = 'max' in o ? o.max : openChallengeMaxUnits;
-    let list = scopeVal === 'friends' ? reviewableBase.filter(ch => friendNames.has(ch.creator)) : reviewableBase;
+    const priceVal = 'price' in o ? o.price : openChallengePriceTier;
+    let list = reviewableBase;
     if (leagueVal !== null) list = list.filter(ch => ch.sport === leagueVal);
     list = list.filter(ch => matchesDateFilterVal(resolvedDate(ch), dateVal));
     list = list.filter(ch => matchesTypeVal(ch, typeVal));
-    list = list.filter(ch => {
-      const u = displayUnitsFor(ch);
-      if (minVal !== null && u < minVal) return false;
-      if (maxVal !== null && u > maxVal) return false;
-      return true;
-    });
+    list = list.filter(ch => matchesPriceTier(displayUnitsFor(ch), priceVal));
     return list;
   }
-
-  const scopeToggle = el('div', 'league-scroller');
-  [['global','Global'],['friends','Friends']].forEach(([id,label]) => {
-    const count = applyFilters({ scope: id }).length;
-    const pill = el('button', 'league-pill' + (openChallengeScope === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
-    pill.onclick = () => { openChallengeScope = id; swipeStackInitialized = false; render(); };
-    scopeToggle.appendChild(pill);
-  });
 
   let leagueScroller = el('div', 'league-scroller');
   const allLeagueCount = applyFilters({ league: null }).length;
@@ -4452,34 +4442,13 @@ function renderExistingChallenges() {
     typeScroller.appendChild(pill);
   });
 
-  const maxUnitsScroller = el('div');
-  maxUnitsScroller.style.cssText = 'display:flex;gap:8px;padding:3px 0;align-items:center;';
-  const minLabel = el('span', null, 'Units:'); minLabel.style.cssText = 'font-size:11px;color:var(--text-faint);font-weight:700;flex-shrink:0;';
-  maxUnitsScroller.appendChild(minLabel);
-  const minInput = el('input'); minInput.type = 'number'; minInput.min = '0'; minInput.step = '1'; minInput.placeholder = 'No min'; minInput.id = 'openChallengeMinUnitsInput';
-  minInput.value = openChallengeMinUnits === null ? '' : openChallengeMinUnits;
-  minInput.style.cssText = 'flex:0 0 auto;width:65px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 6px;font-size:12px;box-sizing:border-box;';
-  const toLabel = el('span', null, 'to'); toLabel.style.cssText = 'font-size:11px;color:var(--text-faint);flex-shrink:0;';
-  const maxInput = el('input'); maxInput.type = 'number'; maxInput.min = '0'; maxInput.step = '1'; maxInput.placeholder = 'No max'; maxInput.id = 'openChallengeMaxUnitsInput';
-  maxInput.value = openChallengeMaxUnits === null ? '' : openChallengeMaxUnits;
-  maxInput.style.cssText = 'flex:0 0 auto;width:65px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 6px;font-size:12px;box-sizing:border-box;';
-  minInput.addEventListener('input', () => {
-    openChallengeMinUnits = minInput.value === '' ? null : Math.ceil(parseFloat(minInput.value));
-    swipeStackInitialized = false;
-    clearTimeout(unitFilterDebounce);
-    unitFilterDebounce = setTimeout(() => render(), 500);
+  const maxUnitsScroller = el('div', 'league-scroller');
+  [['all','All Prices'],['1','$'],['2','$$'],['3','$$$'],['4','$$$$']].forEach(([id,label]) => {
+    const count = applyFilters({ price: id }).length;
+    const pill = el('button', 'league-pill' + (openChallengePriceTier === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
+    pill.onclick = () => { openChallengePriceTier = id; swipeStackInitialized = false; render(); };
+    maxUnitsScroller.appendChild(pill);
   });
-  minInput.addEventListener('blur', () => { clearTimeout(unitFilterDebounce); render(); });
-  maxInput.addEventListener('input', () => {
-    openChallengeMaxUnits = maxInput.value === '' ? null : Math.ceil(parseFloat(maxInput.value));
-    swipeStackInitialized = false;
-    clearTimeout(unitFilterDebounce);
-    unitFilterDebounce = setTimeout(() => render(), 500);
-  });
-  maxInput.addEventListener('blur', () => { clearTimeout(unitFilterDebounce); render(); });
-  maxUnitsScroller.appendChild(minInput);
-  maxUnitsScroller.appendChild(toLabel);
-  maxUnitsScroller.appendChild(maxInput);
 
   const list = applyFilters({});
 
@@ -4516,7 +4485,7 @@ function renderExistingChallenges() {
   }
   const rows = [leagueScroller, dateScroller];
   if (gameFilterRow) rows.push(gameFilterRow);
-  rows.push(typeScroller, maxUnitsScroller, scopeToggle);
+  rows.push(typeScroller, maxUnitsScroller);
   return renderSwipeMode(rows);
 }
 
