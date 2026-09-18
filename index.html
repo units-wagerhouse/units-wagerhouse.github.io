@@ -961,6 +961,7 @@ async function completeLoginSetup() {
         await cleanupAllOpenAndAcceptedChallengesOnce();
         await cleanupHouseChallengesOnce();
         await resetMyAccountOnce();
+        await clearChallengesPoolsAndUnitsOnce();
       if (!players.includes(profile.name)) { players.push(profile.name); await savePlayers(players); }
       await refreshGameLists();
 
@@ -1194,6 +1195,8 @@ let friendSearchQuery = '';
 let groupBuilderOpen = false;
 let groupBuilderName = '';
 let groupBuilderMemberUids = new Set();
+let groupLeaderboardOpen = {}; // groupId -> bool
+let h2hSectionOpen = {}; // pairKey -> bool
 let autoMatchNotice = null; // { creator, isFriend } | null
 let friendsAllProfilesLoaded = false;
 let friendProfileView = null; // uid of a friend whose profile card is expanded
@@ -1299,10 +1302,12 @@ function renderFriendsScreen() {
   wrap.appendChild(el('div', 'week-header', `Friend Groups (${myGroups.length})`));
   myGroups.forEach(grp => {
     const row = el('div', 'pick-row');
+    row.style.cursor = 'pointer';
     const left = el('div');
     left.appendChild(el('div', 'who', grp.name));
     left.appendChild(el('div', 'detail', grp.members.map(m => m.name).join(', ')));
     row.appendChild(left);
+    row.onclick = (e) => { if (e.target.closest('button')) return; groupLeaderboardOpen[grp.id] = !groupLeaderboardOpen[grp.id]; render(); };
     if (grp.creatorUid === profile.uid) {
       const delBtn = el('button', null, '\u2715');
       delBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;width:28px;height:28px;font-size:12px;flex-shrink:0;';
@@ -1317,6 +1322,47 @@ function renderFriendsScreen() {
       row.appendChild(delBtn);
     }
     wrap.appendChild(row);
+
+    if (groupLeaderboardOpen[grp.id]) {
+      const lbCard = el('div'); lbCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin:-4px 0 8px;';
+      const modeRow = el('div'); modeRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+      [['manual','On-Demand'],['daily','Daily'],['weekly','Weekly']].forEach(([id,label]) => {
+        const pill = el('button', 'league-pill' + ((grp.leaderboardResetMode || 'manual') === id ? ' active' : ''), label);
+        pill.onclick = async () => {
+          const idx = allPicks.findIndex(p => p.id === grp.id);
+          if (idx === -1) return;
+          const prevMode = allPicks[idx].leaderboardResetMode;
+          allPicks[idx].leaderboardResetMode = id;
+          try { await savePicks(allPicks); render(); }
+          catch (e) { allPicks[idx].leaderboardResetMode = prevMode; alert("Couldn't update (" + describeFetchError(e) + ") — try again."); }
+        };
+        modeRow.appendChild(pill);
+      });
+      lbCard.appendChild(modeRow);
+
+      const stats = computeGroupLeaderboardStats(grp);
+      const ranked = Object.keys(stats).map(name => ({ name, ...stats[name] })).sort((a,b) => b.units - a.units);
+      ranked.forEach((s, i) => {
+        const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;';
+        r.innerHTML = `<span>${i + 1}. ${s.name}${s.name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${s.wins}-${s.losses}</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
+        lbCard.appendChild(r);
+      });
+
+      const resetBtn = el('button', null, 'Reset Leaderboard Now');
+      resetBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
+      resetBtn.onclick = async () => {
+        if (!confirm('Reset this leaderboard? Past results stay on record, but everyone starts fresh from right now.')) return;
+        const idx = allPicks.findIndex(p => p.id === grp.id);
+        if (idx === -1) return;
+        const prev = { leaderboardResetMode: allPicks[idx].leaderboardResetMode, leaderboardPeriodStart: allPicks[idx].leaderboardPeriodStart };
+        allPicks[idx].leaderboardResetMode = 'manual';
+        allPicks[idx].leaderboardPeriodStart = new Date().toISOString();
+        try { await savePicks(allPicks); render(); }
+        catch (e) { Object.assign(allPicks[idx], prev); alert("Couldn't reset (" + describeFetchError(e) + ") — try again."); }
+      };
+      lbCard.appendChild(resetBtn);
+      wrap.appendChild(lbCard);
+    }
   });
 
   const groupToggleBtn = el('button', null, groupBuilderOpen ? '\u2212 Cancel' : '+ Create Group');
@@ -1385,6 +1431,54 @@ function renderFriendsScreen() {
         createGroupBtn.disabled = false; createGroupBtn.textContent = 'Create Group';
       }
     };
+  }
+
+  // ---- head-to-head matchups ----
+  if (myFriends.length) {
+    wrap.appendChild(el('div', 'week-header', `Head-to-Head (${myFriends.length})`));
+    myFriends.forEach(f => {
+      const pairKey = h2hTrackerId(profile.name, f.name);
+      const row = el('div', 'pick-row');
+      row.style.cursor = 'pointer';
+      const left = el('div');
+      left.appendChild(el('div', 'who', f.name));
+      const tracker = allPicks.find(p => p.poolType === 'h2hTracker' && p.id === pairKey);
+      const quickStats = computeH2HStats(profile.name, f.name, tracker ? tracker.resetAt : null);
+      left.appendChild(el('div', 'detail', `${quickStats[profile.name].wins}-${quickStats[f.name].wins}`));
+      row.appendChild(left);
+      row.onclick = () => { h2hSectionOpen[pairKey] = !h2hSectionOpen[pairKey]; render(); };
+      wrap.appendChild(row);
+
+      if (h2hSectionOpen[pairKey]) {
+        const h2hCard = el('div'); h2hCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin:-4px 0 8px;';
+        [profile.name, f.name].forEach(name => {
+          const s = quickStats[name];
+          const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;';
+          r.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${s.wins} won</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
+          h2hCard.appendChild(r);
+        });
+        const resetBtn = el('button', null, 'Reset Matchup Now');
+        resetBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
+        resetBtn.onclick = async () => {
+          if (!confirm(`Reset your matchup with ${f.name}? Past results stay on record, but the head-to-head tally starts fresh from right now.`)) return;
+          const idx = allPicks.findIndex(p => p.id === pairKey);
+          const nowIso = new Date().toISOString();
+          if (idx === -1) {
+            const rec = { id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, timestamp: nowIso };
+            allPicks.push(rec);
+          } else {
+            allPicks[idx].resetAt = nowIso;
+          }
+          try { await savePicks(allPicks); render(); }
+          catch (e) {
+            if (idx === -1) allPicks.pop(); else allPicks[idx].resetAt = tracker ? tracker.resetAt : null;
+            alert("Couldn't reset (" + describeFetchError(e) + ") — try again.");
+          }
+        };
+        h2hCard.appendChild(resetBtn);
+        wrap.appendChild(h2hCard);
+      }
+    });
   }
 
   // ---- search ----
@@ -4424,6 +4518,67 @@ function computeChallengeProfit(ch, iAmCreator) {
   if (iWin) return iAmCreator ? myStake : Math.ceil(myStake * mult);
   return -myStake;
 }
+function currentPeriodStart(rec) {
+  const mode = rec.leaderboardResetMode || 'manual';
+  if (mode === 'daily') {
+    return houseDayKey(new Date()) + 'T00:00:00.000Z';
+  }
+  if (mode === 'weekly') {
+    const now = new Date();
+    const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay()); weekStart.setHours(0,0,0,0);
+    return weekStart.toISOString();
+  }
+  return rec.leaderboardPeriodStart || rec.timestamp || '1970-01-01T00:00:00.000Z';
+}
+function computeGroupLeaderboardStats(grp) {
+  const periodStart = new Date(currentPeriodStart(grp));
+  const memberNames = new Set(grp.members.map(m => m.name));
+  const stats = {};
+  grp.members.forEach(m => { stats[m.name] = { wins: 0, losses: 0, units: 0 }; });
+
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.status === 'accepted' && new Date(p.timestamp) >= periodStart).forEach(ch => {
+    [['creator', true], ['acceptedBy', false]].forEach(([role, isCreator]) => {
+      const name = ch[role];
+      if (!name || !memberNames.has(name)) return;
+      const profit = computeChallengeProfit(ch, isCreator);
+      if (profit === null) return;
+      if (profit > 0) stats[name].wins++;
+      else if (profit < 0) stats[name].losses++;
+      stats[name].units += profit;
+    });
+  });
+
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool' && p.status === 'settled' && new Date(p.timestamp) >= periodStart).forEach(pool => {
+    (pool.participants || []).forEach(pt => {
+      if (!memberNames.has(pt.name)) return;
+      const payout = (pool.payouts || []).find(po => po.name === pt.name);
+      const net = (payout ? payout.amount : 0) - pool.buyInUnits;
+      if (net > 0) stats[pt.name].wins++;
+      else if (net < 0) stats[pt.name].losses++;
+      stats[pt.name].units += net;
+    });
+  });
+  return stats;
+}
+function computeH2HStats(nameA, nameB, resetAt) {
+  const periodStart = new Date(resetAt || '1970-01-01T00:00:00.000Z');
+  const stats = { [nameA]: { wins: 0, units: 0 }, [nameB]: { wins: 0, units: 0 } };
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.status === 'accepted' && new Date(p.timestamp) >= periodStart &&
+    ((p.creator === nameA && p.acceptedBy === nameB) || (p.creator === nameB && p.acceptedBy === nameA))
+  ).forEach(ch => {
+    const profitCreator = computeChallengeProfit(ch, true);
+    const profitAcceptor = computeChallengeProfit(ch, false);
+    if (profitCreator === null || profitAcceptor === null) return;
+    if (profitCreator > 0) stats[ch.creator].wins++;
+    else if (profitAcceptor > 0) stats[ch.acceptedBy].wins++;
+    stats[ch.creator].units += profitCreator;
+    stats[ch.acceptedBy].units += profitAcceptor;
+  });
+  return stats;
+}
+function h2hTrackerId(nameA, nameB) {
+  return 'h2h_' + [nameA, nameB].sort().join('_vs_');
+}
 
 function renderCompletedChallenges() {
   const wrap = el('div');
@@ -5538,6 +5693,16 @@ async function cleanupAcceptedChallengesOnce() {
   }
   try { localStorage.setItem(FLAG, '1'); } catch (e) {}
 }
+async function clearChallengesPoolsAndUnitsOnce() {
+  const FLAG = 'ww_clear_challenges_pools_units_v1';
+  try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
+  const before = allPicks.length;
+  allPicks = allPicks.filter(p => p.poolType !== 'challenge' && p.poolType !== 'accountTx');
+  if (allPicks.length !== before) {
+    try { await savePicks(allPicks); } catch (e) { return; /* retry next load if save failed */ }
+  }
+  try { localStorage.setItem(FLAG, '1'); } catch (e) {}
+}
 async function resetMyAccountOnce() {
   const FLAG = 'ww_reset_account_v1';
   try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
@@ -6054,6 +6219,7 @@ function renderLeaderboard() {
         await cleanupAllOpenAndAcceptedChallengesOnce();
         await cleanupHouseChallengesOnce();
         await resetMyAccountOnce();
+        await clearChallengesPoolsAndUnitsOnce();
         if (!players.includes(profile.name)) { players.push(profile.name); await savePlayers(players); }
         await refreshGameLists();
 
