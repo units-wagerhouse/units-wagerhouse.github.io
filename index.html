@@ -3487,6 +3487,11 @@ function renderGames() {
   return wrap;
 }
 
+let golfDraftStore = {};
+function getGolfDraft(tournamentId) {
+  if (!golfDraftStore[tournamentId]) golfDraftStore[tournamentId] = { playerA: '', playerB: '', chosenPlayer: null, round: 'total', oddsMultiplier: 1, units: '1', visibility: '' };
+  return golfDraftStore[tournamentId];
+}
 function renderGolfSection() {
   const wrap = el('div');
   wrap.appendChild(el('div', 'setup-hint', "Golf challenges are ML bets: pick two players from the current tournament field, and whoever posts the lower score when the tournament finishes wins. Beta — double-check results once they settle."));
@@ -3511,6 +3516,7 @@ function renderGolfSection() {
     wrap.appendChild(el('div', null, new Date(field.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }))).style.cssText = 'font-size:11.5px;color:var(--text-faint);margin:-6px 0 8px;';
   }
 
+  const draft = getGolfDraft(field.tournamentId);
   const row = el('div'); row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;';
   const selA = el('select'); const selB = el('select');
   [selA, selB].forEach(sel => {
@@ -3518,6 +3524,7 @@ function renderGolfSection() {
     const blank = document.createElement('option'); blank.value = ''; blank.textContent = 'Select player…'; sel.appendChild(blank);
     field.players.slice().sort((a,b) => a.name.localeCompare(b.name)).forEach(p => { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name; sel.appendChild(o); });
   });
+  selA.value = draft.playerA; selB.value = draft.playerB;
   row.appendChild(selA); row.appendChild(selB);
   wrap.appendChild(row);
 
@@ -3526,20 +3533,21 @@ function renderGolfSection() {
   [['total','Total Tournament'],['r1','Round 1'],['r2','Round 2'],['r3','Round 3'],['r4','Round 4']].forEach(([val,label]) => {
     const o = document.createElement('option'); o.value = val; o.textContent = label; roundSel.appendChild(o);
   });
+  roundSel.value = draft.round;
+  roundSel.onchange = () => { draft.round = roundSel.value; };
   wrap.appendChild(roundSel);
   wrap.appendChild(el('div', 'setup-hint', "If it's Round 3, Round 4, or Total, and one player misses the cut while the other makes it, the player who made the cut automatically wins."));
 
   const sideGrid = el('div', 'outcome-grid');
   sideGrid.style.marginTop = '8px';
-  let chosenPlayer = null;
   function rebuildSideGrid() {
     sideGrid.innerHTML = '';
     if (!selA.value || !selB.value || selA.value === selB.value) return;
     [selA.value, selB.value].forEach(name => {
-      const btn = el('div', 'outcome-btn' + (chosenPlayer === name ? ' selected' : ''));
+      const btn = el('div', 'outcome-btn' + (draft.chosenPlayer === name ? ' selected' : ''));
       btn.innerHTML = `<div class="oc-team">${name}</div><div class="oc-line">to win</div>`;
       btn.onclick = () => {
-        chosenPlayer = name;
+        draft.chosenPlayer = name;
         sideGrid.querySelectorAll('.outcome-btn').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
         createBtn.disabled = false;
@@ -3548,21 +3556,20 @@ function renderGolfSection() {
       sideGrid.appendChild(btn);
     });
   }
-  selA.onchange = () => { chosenPlayer = null; createBtn.disabled = true; rebuildSideGrid(); };
-  selB.onchange = () => { chosenPlayer = null; createBtn.disabled = true; rebuildSideGrid(); };
+  selA.onchange = () => { draft.playerA = selA.value; draft.chosenPlayer = null; createBtn.disabled = true; rebuildSideGrid(); };
+  selB.onchange = () => { draft.playerB = selB.value; draft.chosenPlayer = null; createBtn.disabled = true; rebuildSideGrid(); };
   wrap.appendChild(sideGrid);
 
-  let oddsMultiplier = 1;
   const oddsWrap = el('div');
   oddsWrap.style.cssText = 'margin-top:8px;';
   oddsWrap.appendChild(el('div', null, 'Payout odds for whoever accepts')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:6px;';
   const oddsRow = el('div'); oddsRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
   [['3','3:1'],['2','2:1'],['1','Even (1:1)'],['0.5','1:2'],['0.333333333','1:3']].forEach(([val,label], i) => {
     const btn = el('button', null, label);
-    btn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;';
-    if (val === '1') { btn.style.borderColor = 'var(--accent)'; btn.style.color = 'var(--accent)'; }
+    const isCurrent = Math.abs(parseFloat(val) - draft.oddsMultiplier) < 0.01;
+    btn.style.cssText = `background:none;border:1px solid ${isCurrent ? 'var(--accent)' : 'var(--border)'};color:${isCurrent ? 'var(--accent)' : 'var(--text-dim)'};border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;`;
     btn.onclick = () => {
-      oddsMultiplier = parseFloat(val);
+      draft.oddsMultiplier = parseFloat(val);
       oddsRow.querySelectorAll('button').forEach(b => { b.style.borderColor = 'var(--border)'; b.style.color = 'var(--text-dim)'; });
       btn.style.borderColor = 'var(--accent)'; btn.style.color = 'var(--accent)';
     };
@@ -3576,23 +3583,27 @@ function renderGolfSection() {
   const row2 = el('div'); row2.style.cssText = 'display:flex;align-items:center;gap:6px;';
   const unitsLabel = el('span', null, 'Units Staked'); unitsLabel.style.cssText = 'font-size:11px;color:var(--text-dim);font-weight:700;flex-shrink:0;';
   row2.appendChild(unitsLabel);
-  const unitsInput = el('input'); unitsInput.type = 'number'; unitsInput.min = '1'; unitsInput.step = '1'; unitsInput.value = '1'; unitsInput.placeholder = 'Units';
+  const unitsInput = el('input'); unitsInput.type = 'number'; unitsInput.min = '1'; unitsInput.step = '1'; unitsInput.value = draft.units; unitsInput.placeholder = 'Units';
   unitsInput.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
+  unitsInput.oninput = () => { draft.units = unitsInput.value; };
   row2.appendChild(unitsInput);
   const visSel = el('select');
   visSel.style.cssText = 'flex:0 0 auto;width:134px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
   const publicOpt = document.createElement('option'); publicOpt.value = ''; publicOpt.textContent = '\ud83d\udce2 Post publicly'; visSel.appendChild(publicOpt);
   (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel.appendChild(o); });
   (allPicks.filter(p => p.poolType === 'friendGroup' && (p.members||[]).some(m=>m.uid===profile.uid))).forEach(grp => { const o = document.createElement('option'); o.value = 'group:' + grp.id; o.textContent = '\ud83d\udc65 ' + grp.name; visSel.appendChild(o); });
+  visSel.value = draft.visibility;
+  visSel.onchange = () => { draft.visibility = visSel.value; };
   row2.appendChild(visSel);
   slip.appendChild(row2);
 
-  const createBtn = el('button', 'lock-btn', 'Pick two players first');
-  createBtn.disabled = true;
+  const createBtn = el('button', 'lock-btn', draft.chosenPlayer ? 'Submit Challenge' : 'Pick two players first');
+  createBtn.disabled = !draft.chosenPlayer;
   slip.appendChild(createBtn);
   const errEl = el('div', 'pick-error');
   slip.appendChild(errEl);
   wrap.appendChild(slip);
+  rebuildSideGrid();
 
   createBtn.onclick = async () => {
     if (!requireFunded('create a challenge')) return;
@@ -3600,9 +3611,9 @@ function renderGolfSection() {
     const units = Math.ceil(parseFloat(unitsInput.value));
     errEl.textContent = '';
     if (!selA.value || !selB.value || selA.value === selB.value) { errEl.textContent = 'Pick two different players.'; return; }
-    if (!chosenPlayer) { errEl.textContent = 'Pick who you think wins.'; return; }
+    if (!draft.chosenPlayer) { errEl.textContent = 'Pick who you think wins.'; return; }
     if (!units || units <= 0) { errEl.textContent = 'Enter a valid unit amount.'; return; }
-    const displaySide = chosenPlayer === selA.value ? selB.value : selA.value; // acceptor gets the opposite pick
+    const displaySide = draft.chosenPlayer === selA.value ? selB.value : selA.value; // acceptor gets the opposite pick
     const friend = visSel.value || null;
     const groupId = friend && friend.startsWith('group:') ? friend.slice(6) : null;
     const challenge = {
@@ -3610,7 +3621,7 @@ function renderGolfSection() {
       poolType: 'challenge', propType: 'golf_h2h', creator: profile.name,
       sport: 'pga', gameLabel: field.tournamentName, tournamentId: field.tournamentId,
       playerA: selA.value, playerB: selB.value, sideAbbr: displaySide, units, round: roundSel.value,
-      oddsMultiplier, originalOddsMultiplier: 1,
+      oddsMultiplier: draft.oddsMultiplier, originalOddsMultiplier: 1,
       creatorUnitSize: profile.unitSize || null,
       visibility: groupId ? 'group' : (friend ? 'friend' : 'public'),
       groupId, targetFriend: groupId ? null : friend, status: 'open', acceptedBy: null,
@@ -3622,6 +3633,7 @@ function renderGolfSection() {
     if (reserveTx) allPicks.push(reserveTx);
     try {
       await savePicks(allPicks);
+      delete golfDraftStore[field.tournamentId];
       render();
     } catch (e) {
       allPicks.pop();
@@ -4106,8 +4118,6 @@ function renderSwipeCard(ch) {
   const bottom = el('div');
   bottom.style.cssText = 'text-align:center;';
   const displayUnits = displayUnitsFor(ch);
-  const wasConverted = ch.status === 'open' && ch.creatorUnitSize && profile.unitSize && displayUnits !== ch.units;
-  const origNote = originalTermsNote(ch);
   const mult = ch.oddsMultiplier || 1;
   const payoutUnits = Math.ceil(displayUnits * mult);
   const marketTxtId = 'swipe-market-' + ch.id.replace(/[^a-zA-Z0-9]/g, '');
@@ -4115,7 +4125,6 @@ function renderSwipeCard(ch) {
     <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">If you accept, you get</div>
     <div id="${marketTxtId}" style="font-size:17px;font-weight:800;color:#C1501F;margin-bottom:3px;white-space:nowrap;overflow:hidden;">${marketTxt}</div>
     <div style="font-size:13px;color:#3a3528;font-weight:700;">\ud83d\udd25 ${displayUnits} Unit${displayUnits === 1 ? '' : 's'} to win ${payoutUnits} Unit${payoutUnits === 1 ? '' : 's'}</div>
-    ${origNote ? `<div style="font-size:10px;color:#8a8168;font-style:italic;margin-top:3px;">${origNote}</div>` : ''}
   `;
   card.appendChild(bottom);
   setTimeout(() => { const el2 = document.getElementById(marketTxtId); if (el2) shrinkTextToFit(el2, 12); }, 0);
@@ -4973,7 +4982,7 @@ function renderGameCard(g, sport, meta) {
     slip.appendChild(row2);
 
     const createBtn = el('button', 'lock-btn', 'Submit Challenge');
-    createBtn.disabled = true;
+    createBtn.disabled = !selectedSide[key];
     slip.appendChild(createBtn);
     const errEl = el('div', 'pick-error');
     slip.appendChild(errEl);
