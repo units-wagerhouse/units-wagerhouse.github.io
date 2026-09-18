@@ -320,7 +320,7 @@ let players = [];
 let dailySlateData = null; // { dayKey, slate: [{sport,gameId,betType,gameLabel}] } — shared across all users, persisted in Firestore
 let activeTab = 'games';
 let activeSport = 'nfl';
-let gamesDateFilter = 'today'; // 'today' | 'tomorrow' | 'week'
+let gamesDateFilter = 'week'; // 'today' | 'tomorrow' | 'week'
 let selectedSide = {};
 let picksLeagueFilter = null; // null = show all leagues; else a single sport id
 let picksSortMode = 'date_desc';
@@ -358,7 +358,7 @@ let acceptedChallengeDateFilter = 'all'; // 'today' | 'week' | 'month' | 'year' 
 let openChallengeLeague = null; // sport id or null
 let openChallengeGameFilter = null; // gameId or null
 let openChallengeScope = 'global'; // 'global' | 'friends'
-let openChallengeDateFilter = 'today'; // 'today' | 'tomorrow' | 'week'
+let openChallengeDateFilter = 'week'; // 'today' | 'tomorrow' | 'week'
 let openChallengeTypeFilter = 'all'; // 'all' | 'spread' | 'total' | 'player' | 'golf'
 let openChallengeMinUnits = null; // null = no floor
 let unitFilterDebounce = null;
@@ -403,8 +403,9 @@ function markAcceptedChallengesSeen() {
   if (changed) { try { localStorage.setItem('ww_seen_accepted', JSON.stringify([...seen])); } catch (e) {} }
 }
 let poolBuilderLegs = []; // [{sport, gameId, gameLabel, betType, sideAbbr, line, spreadLabel, displayText}]
-let poolBuilderBuyIn = 5;
+let poolBuilderBuyIn = 10;
 let poolBuilderBudget = 10;
+let poolBuilderMaxPerPick = 10;
 let poolBuilderPaid = 1;
 let poolBuilderVisibility = 'public';
 let openChallengeMaxUnits = null; // null = no cap
@@ -940,7 +941,7 @@ function renderTabs() {
   [['existing','Open'],['games','Create'],['requested','Requested'],['completed','Accepted']].forEach(([id,label]) => {
     const t = el('div', 'tab' + (activeTab === id ? ' active' : ''), label);
     t.style.position = 'relative';
-    t.onclick = () => { activeTab = id; if (id === 'completed') markAcceptedChallengesSeen(); render(); };
+    t.onclick = () => { activeTab = id; swipeStackInitialized = false; if (id === 'completed') markAcceptedChallengesSeen(); render(); };
     if (id === 'requested' && unseenPendingFriendChallenges().length > 0) {
       const dot = el('span'); dot.style.cssText = 'position:absolute;top:-2px;right:6px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
       t.appendChild(dot);
@@ -962,7 +963,7 @@ async function completeLoginSetup() {
   challengeBrowseMode = 'swipe';
   openChallengeLeague = null;
   openChallengeTypeFilter = 'all';
-  openChallengeDateFilter = 'today';
+  openChallengeDateFilter = 'week';
   swipeStackInitialized = false;
   render();
   (async () => {
@@ -1138,24 +1139,6 @@ function todaysRemainingBudget() {
   if (profile.dailyRiskDate !== houseDayKey(new Date()) || profile.dailyRiskAmount == null) return 0;
   return profile.dailyRiskAmount + netChallengeTxsToday();
 }
-function hasPendingChallengesToday() {
-  const today = houseDayKey(new Date());
-  return allPicks.some(p => {
-    if (p.poolType !== 'challenge' || p.propType === 'combo_pool') return false;
-    const involvesMe = p.creator === profile.name || p.acceptedBy === profile.name;
-    if (!involvesMe) return false;
-    if (houseDayKey(new Date(p.timestamp)) !== today) return false;
-    if (p.status === 'open' && p.creator === profile.name) return true; // stake reserved, still waiting for someone to accept
-    if (p.status === 'accepted') return settlePick(p).status === 'pending'; // game not final yet
-    return false;
-  });
-}
-function requireDailyBudget(actionLabel) {
-  if (todaysRemainingBudget() > 0) return true;
-  if (hasPendingChallengesToday()) return true; // your stake is tied up, not gone — you could still win it back once those settle
-  alert(`You've used up today's risk budget and everything from today has settled. Come back after midnight to set a new one \u2014 that's the whole point of setting a limit before you start.`);
-  return false;
-}
 let dailyRiskDraftAmount = null;
 function renderDailyRiskScreen() {
   const wrap = el('div');
@@ -1251,8 +1234,11 @@ function renderAccountScreen() {
   unitCard.appendChild(el('div', null, "Today's Risk Budget")).style.cssText = 'font-size:16px;font-weight:800;margin-bottom:4px;';
   if (profile.dailyRiskDate === houseDayKey(new Date()) && profile.dailyRiskAmount != null) {
     const remaining = todaysRemainingBudget();
-    const pendingNote = remaining <= 0 && hasPendingChallengesToday() ? " You're at $0 available, but you still have bets pending today \u2014 you're not locked out until those settle." : '';
-    unitCard.appendChild(el('div', 'setup-hint', `You set aside $${profile.dailyRiskAmount.toFixed(2)} to risk today (1 unit = $${(profile.dailyRiskAmount / 100).toFixed(2)}). $${Math.max(0, remaining).toFixed(2)} of that is still available.${pendingNote} This resets at midnight, when you'll be asked again based on your bankroll at that time.`));
+    unitCard.appendChild(el('div', 'setup-hint', `You set aside $${profile.dailyRiskAmount.toFixed(2)} to risk today (1 unit = $${(profile.dailyRiskAmount / 100).toFixed(2)}). $${Math.max(0, remaining).toFixed(2)} of that is still available. This resets automatically at midnight, when you'll be asked again based on your bankroll at that time \u2014 or reset it yourself right now if you want to change it.`));
+    const resetRiskBtn = el('button', null, 'Reset Today\'s Limit');
+    resetRiskBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:9px;font-size:12.5px;font-weight:700;';
+    resetRiskBtn.onclick = () => { profile = { ...profile, dailyRiskDate: null }; render(); };
+    unitCard.appendChild(resetRiskBtn);
   } else {
     unitCard.appendChild(el('div', 'setup-hint', "You'll be asked how much you're willing to risk today the next time you open the app. This resets every day at midnight \u2014 it's not something you set manually here."));
   }
@@ -3109,6 +3095,13 @@ function renderPoolBuilder() {
   budgetInput.oninput = () => { poolBuilderBudget = budgetInput.value; };
   cfgCard.appendChild(budgetInput);
 
+  cfgCard.appendChild(el('label', null, 'Max units per pick'));
+  const maxPerPickInput = el('input'); maxPerPickInput.type = 'number'; maxPerPickInput.min = '1'; maxPerPickInput.step = '1'; maxPerPickInput.value = String(poolBuilderMaxPerPick);
+  maxPerPickInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+  maxPerPickInput.oninput = () => { poolBuilderMaxPerPick = maxPerPickInput.value; };
+  cfgCard.appendChild(maxPerPickInput);
+  cfgCard.appendChild(el('div', 'setup-hint', "The most house units anyone can put on a single pick. Every pick still needs at least 1 unit \u2014 no game can be left with zero weight."));
+
   cfgCard.appendChild(el('label', null, 'Paid positions (how many finishers split the purse)'));
   const paidInput = el('input'); paidInput.type = 'number'; paidInput.min = '1'; paidInput.step = '1'; paidInput.value = String(poolBuilderPaid);
   paidInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
@@ -3133,15 +3126,16 @@ function renderPoolBuilder() {
 
   submitBtn.onclick = async () => {
     if (!requireFunded('create a pool')) return;
-    if (!requireDailyBudget('create a pool')) return;
     if (!requireUnitSize('create a pool')) return;
     const buyInDollars = parseFloat(buyInInput.value);
     const houseUnitsBudget = parseFloat(budgetInput.value);
     const paidPositions = parseInt(paidInput.value, 10);
+    const maxUnitsPerPick = parseFloat(maxPerPickInput.value);
     submitErr.textContent = '';
     if (!buyInDollars || buyInDollars <= 0) { submitErr.textContent = 'Enter a valid buy-in.'; return; }
     if (!houseUnitsBudget || houseUnitsBudget <= 0) { submitErr.textContent = 'Enter a valid house-unit budget.'; return; }
     if (!paidPositions || paidPositions < 1) { submitErr.textContent = 'Enter at least 1 paid position.'; return; }
+    if (!maxUnitsPerPick || maxUnitsPerPick < 1) { submitErr.textContent = 'Max units per pick must be at least 1.'; return; }
     const rawVis = visSel.value;
     const poolGroupId = rawVis.startsWith('group:') ? rawVis.slice(6) : null;
     const pool = {
@@ -3149,7 +3143,7 @@ function renderPoolBuilder() {
       poolType: 'challenge', propType: 'combo_pool', creator: profile.name,
       sport: poolBuilderLegs[0].sport, gameLabel: poolBuilderLegs.map(l => l.gameLabel).join(' + '),
       legs: poolBuilderLegs.slice(),
-      buyInDollars, houseUnitsBudget, paidPositions,
+      buyInDollars, houseUnitsBudget, paidPositions, maxUnitsPerPick,
       creatorUnitSize: profile.unitSize || null,
       visibility: poolGroupId ? 'group' : rawVis, groupId: poolGroupId,
       status: 'open', participants: [],
@@ -3160,7 +3154,7 @@ function renderPoolBuilder() {
     try {
       await savePicks(allPicks);
       poolBuilderLegs = [];
-      poolBuilderBuyIn = 5; poolBuilderBudget = 10; poolBuilderPaid = 1; poolBuilderVisibility = 'public';
+      poolBuilderBuyIn = 10; poolBuilderBudget = 10; poolBuilderMaxPerPick = 10; poolBuilderPaid = 1; poolBuilderVisibility = 'public';
       poolBuilderOpen = false;
       poolsYourOpen = true;
       poolJoinTarget = pool.id;
@@ -3246,7 +3240,7 @@ function renderPoolCard(pool) {
   }
   card.appendChild(el('div', null, pool.gameLabel)).style.cssText = 'font-size:13.5px;font-weight:700;margin-bottom:4px;';
   const myUnitCost = profile.unitSize ? Math.ceil(pool.buyInDollars / profile.unitSize) : null;
-  card.appendChild(el('div', null, `${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 $${pool.buyInDollars.toFixed(2)} buy-in${myUnitCost !== null ? ` (${myUnitCost}u for you)` : ''} \u00b7 ${pool.houseUnitsBudget} house units \u00b7 top ${pool.paidPositions} paid`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:6px;';
+  card.appendChild(el('div', null, `${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 $${pool.buyInDollars.toFixed(2)} buy-in${myUnitCost !== null ? ` (${myUnitCost}u for you)` : ''} \u00b7 ${pool.houseUnitsBudget} house units (max ${pool.maxUnitsPerPick || pool.houseUnitsBudget}/pick) \u00b7 top ${pool.paidPositions} paid`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:6px;';
   const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 Friends only');
   card.appendChild(el('div', null, `Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
 
@@ -3289,7 +3283,7 @@ function renderPoolCard(pool) {
 
   // who's joined — collapsed by default, same pattern as comments
   const joinedOpen = !!poolJoinedListOpen[pool.id];
-  const joinedHeader = el('div', null, `${joinedOpen ? '\u25be' : '\u25b8'} Who's Joined (${participants.length})`);
+  const joinedHeader = el('div', null, `${joinedOpen ? '\u25be' : '\u25b8'} Leaderboard (${participants.length})`);
   joinedHeader.style.cssText = 'font-size:11px;font-weight:700;color:var(--text-dim);cursor:pointer;margin-top:10px;border-top:1px solid var(--border);padding-top:8px;';
   joinedHeader.onclick = () => { poolJoinedListOpen[pool.id] = !joinedOpen; render(); };
   card.appendChild(joinedHeader);
@@ -3319,8 +3313,10 @@ function renderPoolCard(pool) {
     const legsWrap = el('div'); legsWrap.style.marginTop = '6px';
     pool.legs.forEach(leg => {
       const legLabel = leg.betType === 'total' ? 'Total' : leg.betType === 'moneyline' ? 'Moneyline' : leg.betType === 'playerprop' ? `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} (${leg.line})` : 'Spread';
+      const myPick = myEntry ? myEntry.picks.find(p => p.gameId === leg.gameId && p.betType === leg.betType && (leg.betType !== 'playerprop' || (p.playerName === leg.playerName && p.statCategory === leg.statCategory))) : null;
+      const myPickText = myPick ? ` \u2014 you: ${myPick.sideAbbr === 'OVER' ? 'Over' : (myPick.sideAbbr === 'UNDER' ? 'Under' : fullTeamName(leg.gameId, myPick.sideAbbr))} (${myPick.confUnits}u)` : '';
       const row = el('div'); row.style.cssText = 'font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);';
-      row.innerHTML = `<span style="font-weight:700;">${leg.gameLabel}</span> <span style="color:var(--text-faint);">\u2014 ${legLabel}</span>`;
+      row.innerHTML = `<span style="font-weight:700;">${leg.gameLabel}</span> <span style="color:var(--text-faint);">\u2014 ${legLabel}</span>${myPickText ? `<span style="color:var(--accent);font-weight:700;">${myPickText}</span>` : ''}`;
       legsWrap.appendChild(row);
     });
     card.appendChild(legsWrap);
@@ -3365,16 +3361,18 @@ function renderPoolJoinForm(pool) {
     legCard.appendChild(sideGrid);
 
     const confRow = el('div'); confRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;';
-    const u = poolJoinUnits[key] || 0;
+    if (poolJoinUnits[key] === undefined) poolJoinUnits[key] = 1; // every pick starts with at least 1 unit of weight
+    const u = poolJoinUnits[key];
     totalUsed += u;
     const remaining = pool.houseUnitsBudget - (totalUsed - u);
+    const maxPerPick = pool.maxUnitsPerPick || pool.houseUnitsBudget;
     const minusBtn = el('button', null, '\u2212'); minusBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;width:32px;height:32px;font-size:14px;';
-    minusBtn.disabled = u <= 0;
-    minusBtn.onclick = () => { poolJoinUnits[key] = Math.max(0, (poolJoinUnits[key] || 0) - 1); render(); };
+    minusBtn.disabled = u <= 1;
+    minusBtn.onclick = () => { poolJoinUnits[key] = Math.max(1, (poolJoinUnits[key] || 1) - 1); render(); };
     const unitsLabel = el('span', null, `${u} unit${u === 1 ? '' : 's'}`); unitsLabel.style.cssText = 'font-size:12px;font-weight:700;min-width:56px;text-align:center;';
     const plusBtn = el('button', null, '+'); plusBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;width:32px;height:32px;font-size:14px;';
-    plusBtn.disabled = u >= remaining;
-    plusBtn.onclick = () => { poolJoinUnits[key] = (poolJoinUnits[key] || 0) + 1; render(); };
+    plusBtn.disabled = u >= remaining || u >= maxPerPick;
+    plusBtn.onclick = () => { poolJoinUnits[key] = (poolJoinUnits[key] || 1) + 1; render(); };
     confRow.appendChild(minusBtn); confRow.appendChild(unitsLabel); confRow.appendChild(plusBtn);
     legCard.appendChild(confRow);
     wrap.appendChild(legCard);
@@ -3386,15 +3384,15 @@ function renderPoolJoinForm(pool) {
   const joinBtn = el('button', 'lock-btn', `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.ceil(pool.buyInDollars/profile.unitSize)) + 'u' : ''})`);
   joinBtn.onclick = async () => {
     if (!requireFunded('join a pool')) return;
-    if (!requireDailyBudget('join a pool')) return;
     if (!requireUnitSize('join a pool')) return;
     errEl.textContent = '';
     const missingSide = pool.legs.some(leg => !poolJoinSides[poolLegKey(leg)]);
     if (missingSide) { errEl.textContent = 'Pick a side for every game.'; return; }
-    if (totalUsed <= 0) { errEl.textContent = 'Assign at least 1 house unit.'; return; }
+    const underweighted = pool.legs.some(leg => (poolJoinUnits[poolLegKey(leg)] || 0) < 1);
+    if (underweighted) { errEl.textContent = 'Every game needs at least 1 house unit.'; return; }
     if (totalUsed > pool.houseUnitsBudget) { errEl.textContent = "You've used more than your house-unit budget."; return; }
     joinBtn.disabled = true; joinBtn.textContent = 'Joining…';
-    const picks = pool.legs.map(leg => ({ gameId: leg.gameId, betType: leg.betType, playerName: leg.playerName, statCategory: leg.statCategory, sideAbbr: poolJoinSides[poolLegKey(leg)], confUnits: poolJoinUnits[poolLegKey(leg)] || 0 })).filter(p => p.confUnits > 0);
+    const picks = pool.legs.map(leg => ({ gameId: leg.gameId, betType: leg.betType, playerName: leg.playerName, statCategory: leg.statCategory, sideAbbr: poolJoinSides[poolLegKey(leg)], confUnits: poolJoinUnits[poolLegKey(leg)] || 1 }));
     const idx = allPicks.findIndex(p => p.id === pool.id);
     if (idx === -1) { errEl.textContent = 'Pool no longer exists.'; joinBtn.disabled = false; joinBtn.textContent = `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.ceil(pool.buyInDollars/profile.unitSize)) + 'u' : ''})`; return; }
     if (!allPicks[idx].participants) allPicks[idx].participants = [];
@@ -3455,7 +3453,7 @@ function renderGames() {
   }
 
   const dateScroller = el('div', 'league-scroller');
-  [['today','Today'],['tomorrow','Tomorrow'],['week','This Week']].forEach(([id,label]) => {
+  [['week','All Week'],['today','Today'],['tomorrow','Tomorrow']].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (gamesDateFilter === id ? ' active' : ''), label);
     pill.onclick = () => { gamesDateFilter = id; render(); };
     dateScroller.appendChild(pill);
@@ -3598,7 +3596,6 @@ function renderGolfSection() {
 
   createBtn.onclick = async () => {
     if (!requireFunded('create a challenge')) return;
-    if (!requireDailyBudget('create a challenge')) return;
     if (!requireUnitSize('create a challenge')) return;
     const units = Math.ceil(parseFloat(unitsInput.value));
     errEl.textContent = '';
@@ -3888,7 +3885,6 @@ function renderCounterForm(ch) {
 
   sendBtn.onclick = async () => {
     if (!requireFunded('counter a challenge')) return;
-    if (!requireDailyBudget('counter a challenge')) return;
     if (!requireUnitSize('counter a challenge')) return;
     const units = Math.ceil(parseFloat(unitsInput.value));
     errEl.textContent = '';
@@ -4032,7 +4028,6 @@ async function topUpHouseChallenges() {
 
 async function acceptChallenge(ch) {
   if (!requireFunded('accept a challenge')) return;
-  if (!requireDailyBudget('accept a challenge')) return;
   if (!requireUnitSize('accept a challenge')) return;
   const idx = allPicks.findIndex(p => p.id === ch.id);
   if (idx === -1) return;
@@ -4120,7 +4115,6 @@ function renderSwipeCard(ch) {
     <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">If you accept, you get</div>
     <div id="${marketTxtId}" style="font-size:17px;font-weight:800;color:#C1501F;margin-bottom:3px;white-space:nowrap;overflow:hidden;">${marketTxt}</div>
     <div style="font-size:13px;color:#3a3528;font-weight:700;">\ud83d\udd25 ${displayUnits} Unit${displayUnits === 1 ? '' : 's'} to win ${payoutUnits} Unit${payoutUnits === 1 ? '' : 's'}</div>
-    ${wasConverted ? `<div style="font-size:10px;color:#8a8168;margin-top:3px;">(matches ${ch.creator}'s ${ch.units}${ch.units === 1 ? 'u' : 'u'} stake in real dollars)</div>` : ''}
     ${origNote ? `<div style="font-size:10px;color:#8a8168;font-style:italic;margin-top:3px;">${origNote}</div>` : ''}
   `;
   card.appendChild(bottom);
@@ -4133,8 +4127,8 @@ function renderSwipeCard(ch) {
   card.appendChild(stampAccept); card.appendChild(stampDecline);
   cardWrap.appendChild(card);
 
-  function doAccept() { if (!requireFunded('accept a challenge')) return; if (!requireDailyBudget('accept a challenge')) return; if (!requireUnitSize('accept a challenge')) return; swipeCart.push(ch); swipeStack.shift(); recordSwipeCartAdd(ch.id); render(); }
   function doDecline() { swipeStack.shift(); recordSwipeSkip(ch.id); render(); }
+  function doAccept() { if (!requireFunded('accept a challenge')) return; if (!requireUnitSize('accept a challenge')) return; swipeCart.push(ch); swipeStack.shift(); recordSwipeCartAdd(ch.id); render(); }
   cardWrap._doAccept = doAccept;
   cardWrap._doDecline = doDecline;
 
@@ -4268,8 +4262,6 @@ function renderSwipeCart() {
   confirmBtn.style.marginTop = '12px';
   confirmBtn.onclick = async () => {
     if (!requireFunded('accept a challenge')) return;
-    if (!requireDailyBudget('accept a challenge')) return;
-  if (!requireDailyBudget('accept a challenge')) return;
   if (!requireUnitSize('accept a challenge')) return;
     confirmBtn.disabled = true; confirmBtn.textContent = 'Saving…';
     const snapshot = swipeCart.slice();
@@ -4343,45 +4335,96 @@ function renderExistingChallenges() {
   const declinedIdsForCount = declinedChallengeIdsFor(profile.name);
   const publicOpenAll = all.filter(ch => ch.visibility === 'public' && stillActive(ch));
   const publicOpen = publicOpenAll.filter(ch => ch.creator !== profile.name);
-  const reviewable = publicOpen.filter(ch => ch.acceptedBy !== profile.name && !cartIdsForCount.has(ch.id) && !declinedIdsForCount.has(ch.id));
-  const globalCount = reviewable.length;
-  const friendsCount = reviewable.filter(ch => friendNames.has(ch.creator)).length;
+  const reviewableBase = publicOpen.filter(ch => ch.acceptedBy !== profile.name && !cartIdsForCount.has(ch.id) && !declinedIdsForCount.has(ch.id));
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  function matchesDateFilterVal(gd, dateVal) {
+    if (!gd) return true;
+    if (dateVal === 'today') {
+      return gd.getFullYear() === now.getFullYear() && gd.getMonth() === now.getMonth() && gd.getDate() === now.getDate();
+    }
+    if (dateVal === 'tomorrow') {
+      const tmrw = new Date(startOfToday); tmrw.setDate(tmrw.getDate() + 1);
+      return gd.getFullYear() === tmrw.getFullYear() && gd.getMonth() === tmrw.getMonth() && gd.getDate() === tmrw.getDate();
+    }
+    const weekEnd = new Date(startOfToday); weekEnd.setDate(weekEnd.getDate() + 7);
+    return gd >= startOfToday && gd < weekEnd;
+  }
+  function resolvedDate(ch) {
+    const idx = gameIndex[ch.gameId];
+    if (idx && idx.game && idx.game.start) return new Date(idx.game.start);
+    if (ch.propType === 'golf_h2h' && golfFieldCache && golfFieldCache.tournamentId === ch.tournamentId && golfFieldCache.date) return new Date(golfFieldCache.date);
+    return null;
+  }
+  function matchesTypeVal(ch, typeVal) {
+    if (typeVal === 'all') return true;
+    if (typeVal === 'player') return ch.propType === 'player';
+    if (typeVal === 'moneyline') return ch.propType === 'golf_h2h' || ch.betType === 'moneyline' || (ch.betType === 'spread' && !ch.propType && !ch.spreadLabel);
+    if (typeVal === 'spread') return !ch.propType && ch.betType === 'spread' && !!ch.spreadLabel;
+    return !ch.propType && ch.betType === typeVal;
+  }
+  // Applies every filter, letting one dimension be overridden — used to compute "if I picked this option instead,
+  // holding everything else the same, how many would show" for every filter box's live count.
+  function applyFilters(o) {
+    const scopeVal = 'scope' in o ? o.scope : openChallengeScope;
+    const leagueVal = 'league' in o ? o.league : openChallengeLeague;
+    const dateVal = 'date' in o ? o.date : openChallengeDateFilter;
+    const typeVal = 'type' in o ? o.type : openChallengeTypeFilter;
+    const minVal = 'min' in o ? o.min : openChallengeMinUnits;
+    const maxVal = 'max' in o ? o.max : openChallengeMaxUnits;
+    let list = scopeVal === 'friends' ? reviewableBase.filter(ch => friendNames.has(ch.creator)) : reviewableBase;
+    if (leagueVal !== null) list = list.filter(ch => ch.sport === leagueVal);
+    list = list.filter(ch => matchesDateFilterVal(resolvedDate(ch), dateVal));
+    list = list.filter(ch => matchesTypeVal(ch, typeVal));
+    list = list.filter(ch => {
+      const u = displayUnitsFor(ch);
+      if (minVal !== null && u < minVal) return false;
+      if (maxVal !== null && u > maxVal) return false;
+      return true;
+    });
+    return list;
+  }
 
   const scopeToggle = el('div', 'league-scroller');
-  [['global','Global',globalCount],['friends','Friends',friendsCount]].forEach(([id,label,count]) => {
+  [['global','Global'],['friends','Friends']].forEach(([id,label]) => {
+    const count = applyFilters({ scope: id }).length;
     const pill = el('button', 'league-pill' + (openChallengeScope === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
     pill.onclick = () => { openChallengeScope = id; swipeStackInitialized = false; render(); };
     scopeToggle.appendChild(pill);
   });
 
-  const byView = openChallengeScope === 'friends' ? publicOpen.filter(ch => friendNames.has(ch.creator)) : publicOpen;
-
   let leagueScroller = el('div', 'league-scroller');
-  const allPill = el('button', 'league-pill' + (openChallengeLeague === null ? ' active' : ''), 'All leagues');
+  const allLeagueCount = applyFilters({ league: null }).length;
+  const allPill = el('button', 'league-pill' + (openChallengeLeague === null ? ' active' : ''), allLeagueCount > 0 ? `All leagues (${allLeagueCount})` : 'All leagues');
   allPill.onclick = () => { openChallengeLeague = null; swipeStackInitialized = false; render(); };
   leagueScroller.appendChild(allPill);
   LEAGUES_META.filter(l => l.active && !l.isGolf).forEach(lg => {
-    const pill = el('button', 'league-pill' + (openChallengeLeague === lg.id ? ' active' : ''), lg.label);
+    const count = applyFilters({ league: lg.id }).length;
+    const pill = el('button', 'league-pill' + (openChallengeLeague === lg.id ? ' active' : ''), count > 0 ? `${lg.label} (${count})` : lg.label);
     pill.onclick = () => { openChallengeLeague = lg.id; swipeStackInitialized = false; render(); };
     leagueScroller.appendChild(pill);
   });
   const golfMeta = LEAGUES_META.find(l => l.isGolf);
   if (golfMeta) {
-    const pill = el('button', 'league-pill' + (openChallengeLeague === golfMeta.id ? ' active' : ''), golfMeta.label);
+    const count = applyFilters({ league: golfMeta.id }).length;
+    const pill = el('button', 'league-pill' + (openChallengeLeague === golfMeta.id ? ' active' : ''), count > 0 ? `${golfMeta.label} (${count})` : golfMeta.label);
     pill.onclick = () => { openChallengeLeague = golfMeta.id; swipeStackInitialized = false; render(); };
     leagueScroller.appendChild(pill);
   }
 
   const dateScroller = el('div', 'league-scroller');
-  [['today','Today'],['tomorrow','Tomorrow'],['week','This Week']].forEach(([id,label]) => {
-    const pill = el('button', 'league-pill' + (openChallengeDateFilter === id ? ' active' : ''), label);
+  [['week','All Week'],['today','Today'],['tomorrow','Tomorrow']].forEach(([id,label]) => {
+    const count = applyFilters({ date: id }).length;
+    const pill = el('button', 'league-pill' + (openChallengeDateFilter === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
     pill.onclick = () => { openChallengeDateFilter = id; swipeStackInitialized = false; render(); };
     dateScroller.appendChild(pill);
   });
 
   const typeScroller = el('div', 'league-scroller');
   [['all','All Types'],['spread','Spread'],['total','Total'],['moneyline','ML'],['player','Player Prop']].forEach(([id,label]) => {
-    const pill = el('button', 'league-pill' + (openChallengeTypeFilter === id ? ' active' : ''), label);
+    const count = applyFilters({ type: id }).length;
+    const pill = el('button', 'league-pill' + (openChallengeTypeFilter === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
     pill.onclick = () => { openChallengeTypeFilter = id; swipeStackInitialized = false; render(); };
     typeScroller.appendChild(pill);
   });
@@ -4415,33 +4458,11 @@ function renderExistingChallenges() {
   maxUnitsScroller.appendChild(toLabel);
   maxUnitsScroller.appendChild(maxInput);
 
-  const byLeague = openChallengeLeague === null ? byView : byView.filter(ch => ch.sport === openChallengeLeague);
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const matchesDateFilter = (gd) => {
-    if (!gd) return true;
-    if (openChallengeDateFilter === 'today') {
-      return gd.getFullYear() === now.getFullYear() && gd.getMonth() === now.getMonth() && gd.getDate() === now.getDate();
-    }
-    if (openChallengeDateFilter === 'tomorrow') {
-      const tmrw = new Date(startOfToday); tmrw.setDate(tmrw.getDate() + 1);
-      return gd.getFullYear() === tmrw.getFullYear() && gd.getMonth() === tmrw.getMonth() && gd.getDate() === tmrw.getDate();
-    }
-    const weekEnd = new Date(startOfToday); weekEnd.setDate(weekEnd.getDate() + 7);
-    return gd >= startOfToday && gd < weekEnd;
-  };
-  const byDate = byLeague.filter(ch => {
-    let gd = null;
-    const idx = gameIndex[ch.gameId];
-    if (idx && idx.game && idx.game.start) gd = new Date(idx.game.start);
-    else if (ch.propType === 'golf_h2h' && golfFieldCache && golfFieldCache.tournamentId === ch.tournamentId && golfFieldCache.date) gd = new Date(golfFieldCache.date);
-    if (!gd) return true; // no resolvable date at all — don't hide it
-    return matchesDateFilter(gd);
-  });
+  const list = applyFilters({});
 
   let gameFilterRow = null;
   if (openChallengeLeague !== null && openChallengeLeague !== (LEAGUES_META.find(l=>l.isGolf)||{}).id) {
-    const gamesInScope = (DATA[openChallengeLeague] || []).filter(g => g.status === 'scheduled' && matchesDateFilter(new Date(g.start)));
+    const gamesInScope = (DATA[openChallengeLeague] || []).filter(g => g.status === 'scheduled' && matchesDateFilterVal(new Date(g.start), openChallengeDateFilter));
     if (!gamesInScope.some(g => g.id === openChallengeGameFilter)) openChallengeGameFilter = null;
     gameFilterRow = el('div'); gameFilterRow.style.cssText = 'padding:3px 0;';
     const gameSel = el('select');
@@ -4456,28 +4477,15 @@ function renderExistingChallenges() {
     gameSel.onchange = () => { openChallengeGameFilter = gameSel.value || null; swipeStackInitialized = false; render(); };
     gameFilterRow.appendChild(gameSel);
   }
-  const byGame = (openChallengeGameFilter && gameFilterRow) ? byDate.filter(ch => ch.gameId === openChallengeGameFilter) : byDate;
-
-  const byType = openChallengeTypeFilter === 'all' ? byGame : byGame.filter(ch => {
-    if (openChallengeTypeFilter === 'player') return ch.propType === 'player';
-    if (openChallengeTypeFilter === 'moneyline') return ch.propType === 'golf_h2h' || ch.betType === 'moneyline' || (ch.betType === 'spread' && !ch.propType && !ch.spreadLabel);
-    if (openChallengeTypeFilter === 'spread') return !ch.propType && ch.betType === 'spread' && !!ch.spreadLabel;
-    return !ch.propType && ch.betType === openChallengeTypeFilter;
-  });
-  const list = byType.filter(ch => {
-    const u = displayUnitsFor(ch);
-    if (openChallengeMinUnits !== null && u < openChallengeMinUnits) return false;
-    if (openChallengeMaxUnits !== null && u > openChallengeMaxUnits) return false;
-    return true;
-  });
-  list.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const filteredList = (openChallengeGameFilter && gameFilterRow) ? list.filter(ch => ch.gameId === openChallengeGameFilter) : list;
+  filteredList.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
 
   if (!swipeStackInitialized) {
     const persistedCartIds = cartChallengeIdsFor(profile.name);
     swipeCart = all.filter(ch => persistedCartIds.has(ch.id) && ch.status === 'open');
     const cartIds = new Set(swipeCart.map(c => c.id));
     const declinedIds = declinedChallengeIdsFor(profile.name);
-    swipeStack = list.filter(ch => ch.creator !== profile.name && ch.acceptedBy !== profile.name && !cartIds.has(ch.id) && !declinedIds.has(ch.id));
+    swipeStack = filteredList.filter(ch => ch.creator !== profile.name && ch.acceptedBy !== profile.name && !cartIds.has(ch.id) && !declinedIds.has(ch.id));
     swipeStackInitialized = true;
   }
   if (challengeBrowseMode === 'cart') {
@@ -4624,7 +4632,7 @@ function renderCompletedChallenges() {
   }
 
   const dateScroller = el('div', 'league-scroller');
-  [['today','Today'],['week','This Week'],['month','This Month'],['year','This Year'],['all','All']].forEach(([id,label]) => {
+  [['today','Today'],['week','Week'],['month','Month'],['year','Year'],['all','All']].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (acceptedChallengeDateFilter === id ? ' active' : ''), label);
     pill.onclick = () => { acceptedChallengeDateFilter = id; render(); };
     dateScroller.appendChild(pill);
@@ -4973,7 +4981,6 @@ function renderGameCard(g, sport, meta) {
 
     createBtn.onclick = async () => {
       if (!requireFunded('create a challenge')) return;
-      if (!requireDailyBudget('create a challenge')) return;
       if (!requireUnitSize('create a challenge')) return;
       const side = selectedSide[key];
       const units = Math.ceil(parseFloat(unitsInput.value));
@@ -5167,8 +5174,6 @@ function renderGameCard(g, sport, meta) {
 
     createBtn2.onclick = async () => {
       if (!requireFunded('create a challenge')) return;
-      if (!requireDailyBudget('create a challenge')) return;
-    if (!requireDailyBudget('create a challenge')) return;
     if (!requireUnitSize('create a challenge')) return;
       const playerName = nameSel ? nameSel.value : (nameInput ? nameInput.value.trim() : '');
       const line = parseFloat(lineInput.value);
@@ -6159,7 +6164,7 @@ function renderLeaderboard() {
   challengeBrowseMode = 'swipe';
   openChallengeLeague = null;
   openChallengeTypeFilter = 'all';
-  openChallengeDateFilter = 'today';
+  openChallengeDateFilter = 'week';
   swipeStackInitialized = false;
 
   if (profile && session) {
