@@ -357,7 +357,6 @@ let acceptedChallengeLeague = null; // sport id or null
 let acceptedChallengeDateFilter = 'all'; // 'today' | 'week' | 'month' | 'year' | 'all'
 let openChallengeLeague = null; // sport id or null
 let openChallengeGameFilter = null; // gameId or null
-let openChallengePriceTier = 'all'; // 'all' | '1' | '2' | '3' | '4'
 let openChallengeDateFilter = 'week'; // 'today' | 'tomorrow' | 'week'
 let openChallengeTypeFilter = 'all'; // 'all' | 'spread' | 'total' | 'player' | 'golf'
 let counterFormOpen = {};
@@ -855,11 +854,11 @@ function renderMenu() {
   if (!profile) { balanceBtn.style.display = 'none'; }
   else {
     balanceBtn.style.display = '';
-    if (profile.unitSize && profile.dailyRiskDate === houseDayKey(new Date())) {
-      const unitsRemaining = Math.floor(todaysRemainingBudget() / profile.unitSize);
+    if (profile.dailyRiskDate === houseDayKey(new Date())) {
+      const unitsRemaining = Math.floor(todaysRemainingBudget());
       balanceBtn.textContent = unitsRemaining + ' Units';
     } else {
-      balanceBtn.textContent = '$' + accountBalanceFor(profile.name).toFixed(2);
+      balanceBtn.textContent = Math.floor(accountBalanceFor(profile.name)) + ' Units';
     }
     balanceBtn.onclick = () => { appSection = 'account'; render(); };
   }
@@ -1141,40 +1140,35 @@ let dailyRiskDraftAmount = null;
 function renderDailyRiskScreen() {
   const wrap = el('div');
   wrap.style.cssText = 'padding-top:32px;text-align:center;';
-  const balance = accountBalanceFor(profile.name);
+  const balance = Math.floor(accountBalanceFor(profile.name));
   if (dailyRiskDraftAmount === null) dailyRiskDraftAmount = balance;
 
   wrap.appendChild(el('div', null, `Good day, ${profile.name}`)).style.cssText = 'font-size:20px;font-weight:800;margin-bottom:6px;';
-  wrap.appendChild(el('div', null, `Based on your current bankroll of $${balance.toFixed(2)}, how much are you willing to risk today?`)).style.cssText = 'font-size:14px;color:var(--text-dim);margin-bottom:26px;padding:0 14px;';
+  wrap.appendChild(el('div', null, `Based on your current balance of ${balance} units, how many are you willing to risk today?`)).style.cssText = 'font-size:14px;color:var(--text-dim);margin-bottom:26px;padding:0 14px;';
 
-  const bigNumber = el('div', null, '$' + dailyRiskDraftAmount.toFixed(2));
-  bigNumber.style.cssText = 'font-size:46px;font-weight:900;color:var(--accent);margin-bottom:6px;font-family:var(--font-mono);';
+  const bigNumber = el('div', null, dailyRiskDraftAmount + ' Units');
+  bigNumber.style.cssText = 'font-size:46px;font-weight:900;color:var(--accent);margin-bottom:22px;font-family:var(--font-mono);';
   wrap.appendChild(bigNumber);
 
-  const unitsNote = el('div', null, `${Math.round(dailyRiskDraftAmount)} units available today`);
-  unitsNote.style.cssText = 'font-size:12px;color:var(--text-faint);margin-bottom:22px;';
-  wrap.appendChild(unitsNote);
-
   const sliderRow = el('div'); sliderRow.style.cssText = 'padding:0 20px;margin-bottom:6px;';
-  const slider = el('input'); slider.type = 'range'; slider.min = '0'; slider.max = String(Math.max(balance, 0.01)); slider.step = '0.5'; slider.value = String(dailyRiskDraftAmount);
+  const slider = el('input'); slider.type = 'range'; slider.min = '0'; slider.max = String(Math.max(balance, 1)); slider.step = '1'; slider.value = String(dailyRiskDraftAmount);
   slider.style.cssText = 'width:100%;';
   sliderRow.appendChild(slider);
   wrap.appendChild(sliderRow);
   const sliderLabels = el('div'); sliderLabels.style.cssText = 'display:flex;justify-content:space-between;padding:0 20px;font-size:10.5px;color:var(--text-faint);margin-bottom:22px;';
-  sliderLabels.innerHTML = `<span>$0</span><span>All of it ($${balance.toFixed(2)})</span>`;
+  sliderLabels.innerHTML = `<span>0</span><span>All of it (${balance})</span>`;
   wrap.appendChild(sliderLabels);
 
-  const amtInput = el('input'); amtInput.type = 'number'; amtInput.min = '0'; amtInput.max = String(balance); amtInput.step = '0.5'; amtInput.value = dailyRiskDraftAmount.toFixed(2);
+  const amtInput = el('input'); amtInput.type = 'number'; amtInput.min = '0'; amtInput.max = String(balance); amtInput.step = '1'; amtInput.value = String(dailyRiskDraftAmount);
   amtInput.style.cssText = 'width:140px;text-align:center;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px;font-size:16px;font-family:var(--font-mono);margin:0 auto 22px;display:block;';
   wrap.appendChild(amtInput);
 
   const updateDisplay = () => {
-    bigNumber.textContent = '$' + dailyRiskDraftAmount.toFixed(2);
-    unitsNote.textContent = `${Math.round(dailyRiskDraftAmount)} units available today`;
+    bigNumber.textContent = dailyRiskDraftAmount + ' Units';
   };
-  slider.oninput = () => { dailyRiskDraftAmount = parseFloat(slider.value); amtInput.value = dailyRiskDraftAmount.toFixed(2); updateDisplay(); };
+  slider.oninput = () => { dailyRiskDraftAmount = parseInt(slider.value, 10); amtInput.value = String(dailyRiskDraftAmount); updateDisplay(); };
   amtInput.oninput = () => {
-    let v = parseFloat(amtInput.value);
+    let v = Math.ceil(parseFloat(amtInput.value));
     if (isNaN(v)) v = 0;
     v = Math.max(0, Math.min(balance, v));
     dailyRiskDraftAmount = v;
@@ -1192,10 +1186,9 @@ function renderDailyRiskScreen() {
     confirmBtn.disabled = true; confirmBtn.textContent = 'Saving…';
     const amount = dailyRiskDraftAmount;
     const today = houseDayKey(new Date());
-    const unitSize = amount > 0 ? amount / 100 : null;
     try {
-      await saveProfileDoc(profile.uid, { dailyRiskDate: today, dailyRiskAmount: amount, unitSize });
-      saveProfile({ ...profile, dailyRiskDate: today, dailyRiskAmount: amount, unitSize });
+      await saveProfileDoc(profile.uid, { dailyRiskDate: today, dailyRiskAmount: amount });
+      saveProfile({ ...profile, dailyRiskDate: today, dailyRiskAmount: amount });
       dailyRiskDraftAmount = null;
       render();
     } catch (e) {
@@ -1222,8 +1215,8 @@ function renderAccountScreen() {
   const balance = accountBalanceFor(profile.name);
   const banner = el('div', 'rank-banner');
   const c1 = el('div', 'rank-cell');
-  c1.appendChild(el('div', 'rc-label', 'Account balance'));
-  c1.appendChild(el('div', 'rc-value accent', '$' + balance.toFixed(2)));
+  c1.appendChild(el('div', 'rc-label', 'Units balance'));
+  c1.appendChild(el('div', 'rc-value accent', Math.floor(balance) + ' Units'));
   banner.appendChild(c1);
   wrap.appendChild(banner);
 
@@ -1232,7 +1225,7 @@ function renderAccountScreen() {
   unitCard.appendChild(el('div', null, "Today's Risk Budget")).style.cssText = 'font-size:16px;font-weight:800;margin-bottom:4px;';
   if (profile.dailyRiskDate === houseDayKey(new Date()) && profile.dailyRiskAmount != null) {
     const remaining = todaysRemainingBudget();
-    unitCard.appendChild(el('div', 'setup-hint', `You set aside $${profile.dailyRiskAmount.toFixed(2)} to risk today (1 unit = $${(profile.dailyRiskAmount / 100).toFixed(2)}). $${Math.max(0, remaining).toFixed(2)} of that is still available. This resets automatically at midnight, when you'll be asked again based on your bankroll at that time \u2014 or reset it yourself right now if you want to change it.`));
+    unitCard.appendChild(el('div', 'setup-hint', `You set aside ${profile.dailyRiskAmount} units to risk today. ${Math.max(0, Math.floor(remaining))} of that is still available. This resets automatically at midnight, when you'll be asked again based on your balance at that time \u2014 or reset it yourself right now if you want to change it.`));
     const resetRiskBtn = el('button', null, 'Reset Today\'s Limit');
     resetRiskBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:9px;font-size:12.5px;font-weight:700;';
     resetRiskBtn.onclick = () => { profile = { ...profile, dailyRiskDate: null }; render(); };
@@ -1244,16 +1237,16 @@ function renderAccountScreen() {
 
   const card = el('div', 'setup-card');
   card.style.marginTop = '14px';
-  card.appendChild(el('div', null, 'Deposit or withdraw')).style.cssText = 'font-size:16px;font-weight:800;margin-bottom:4px;';
-  card.appendChild(el('div', 'setup-hint', "This is fake money, tracked for the app \u2014 your balance can't exceed $100 at a time, but you can redeposit as many times as you want once you spend it down. You need a funded balance to create or accept a challenge."));
+  card.appendChild(el('div', null, 'Add or Remove Units')).style.cssText = 'font-size:16px;font-weight:800;margin-bottom:4px;';
+  card.appendChild(el('div', 'setup-hint', "Units have no cash value \u2014 they're just points for keeping score. You need a units balance to create or accept a challenge."));
 
-  card.appendChild(el('label', null, 'Amount ($)'));
-  const amtInput = el('input'); amtInput.type = 'number'; amtInput.min = '0.01'; amtInput.max = '100'; amtInput.step = '0.01'; amtInput.placeholder = 'e.g. 50';
+  card.appendChild(el('label', null, 'Amount (units)'));
+  const amtInput = el('input'); amtInput.type = 'number'; amtInput.min = '1'; amtInput.step = '1'; amtInput.placeholder = 'e.g. 50';
   card.appendChild(amtInput);
 
   const btnRow = el('div'); btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
-  const depositBtn = el('button', 'lock-btn', 'Deposit'); depositBtn.style.flex = '1'; depositBtn.style.marginTop = '0';
-  const withdrawBtn = el('button', null, 'Withdraw');
+  const depositBtn = el('button', 'lock-btn', 'Add'); depositBtn.style.flex = '1'; depositBtn.style.marginTop = '0';
+  const withdrawBtn = el('button', null, 'Remove');
   withdrawBtn.style.cssText = 'flex:1;margin-top:0;background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:10px;font-size:13.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.02em;';
   btnRow.appendChild(depositBtn); btnRow.appendChild(withdrawBtn);
   card.appendChild(btnRow);
@@ -1285,7 +1278,7 @@ function renderAccountScreen() {
         allPicks.push({
           id: profile.name + '_accounttx_bulkrefund_' + ch.id,
           poolType: 'accountTx', player: profile.name,
-          type: 'deposit', amount: ch.units * (ch.creatorUnitSize || profile.unitSize || 0),
+          type: 'deposit', amount: ch.units,
           note: `Stake refunded \u2014 bulk cancel`,
           relatedChallengeId: ch.id,
           timestamp: new Date().toISOString()
@@ -1303,11 +1296,10 @@ function renderAccountScreen() {
   }
 
   async function recordTx(type) {
-    const amount = parseFloat(amtInput.value);
+    const amount = Math.ceil(parseFloat(amtInput.value));
     errEl.textContent = '';
     if (!amount || amount <= 0) { errEl.textContent = 'Enter a valid amount.'; return; }
-    if (type === 'withdraw' && amount > balance) { errEl.textContent = "You can't withdraw more than your current balance."; return; }
-    if (type === 'deposit' && balance + amount > 100) { errEl.textContent = `Your balance can't exceed $100. You can deposit up to $${(100 - balance).toFixed(2)} right now.`; return; }
+    if (type === 'withdraw' && amount > balance) { errEl.textContent = "You can't remove more than your current balance."; return; }
     const tx = {
       id: profile.name + '_accounttx_' + Date.now(),
       poolType: 'accountTx', player: profile.name, type, amount,
@@ -1331,15 +1323,15 @@ function renderAccountScreen() {
   const txs = accountTxsFor(profile.name).filter(tx => !tx.relatedChallengeId).slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
   wrap.appendChild(el('div', 'week-header', 'History'));
   if (!txs.length) {
-    wrap.appendChild(el('div', 'empty', 'No deposits or withdrawals yet.'));
+    wrap.appendChild(el('div', 'empty', 'No units added or removed yet.'));
   } else {
     txs.forEach(tx => {
       const row = el('div', 'pick-row');
       const left = el('div');
-      left.appendChild(el('div', 'who', tx.type === 'deposit' ? 'Deposit' : 'Withdrawal'));
+      left.appendChild(el('div', 'who', tx.type === 'deposit' ? 'Added' : 'Removed'));
       left.appendChild(el('div', 'detail', new Date(tx.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })));
       row.appendChild(left);
-      const amtEl = el('div', null, (tx.type === 'deposit' ? '+' : '-') + '$' + tx.amount.toFixed(2));
+      const amtEl = el('div', null, (tx.type === 'deposit' ? '+' : '-') + Math.ceil(tx.amount) + 'u');
       amtEl.style.cssText = `font-family:var(--font-mono);font-weight:800;font-size:14px;color:${tx.type === 'deposit' ? '#4CAF50' : 'var(--danger)'};`;
       row.appendChild(amtEl);
       wrap.appendChild(row);
@@ -1716,7 +1708,7 @@ function renderSetup() {
         saveSession({ idToken: auth.idToken, refreshToken: auth.refreshToken, uid: auth.localId, expiresAt: Date.now() + parseInt(auth.expiresIn, 10) * 1000 });
         const doc = await fetchProfileDoc(auth.localId);
         if (!doc) throw new Error('Profile data missing for this account.');
-        saveProfile({ name: doc.name, username: doc.username, email: doc.email || null, unitSize: doc.unitSize || null, dailyRiskDate: doc.dailyRiskDate || null, dailyRiskAmount: doc.dailyRiskAmount != null ? doc.dailyRiskAmount : null, friends: doc.friends || [], uid: auth.localId });
+        saveProfile({ name: doc.name, username: doc.username, email: doc.email || null, dailyRiskDate: doc.dailyRiskDate || null, dailyRiskAmount: doc.dailyRiskAmount != null ? doc.dailyRiskAmount : null, friends: doc.friends || [], uid: auth.localId });
       }
       await completeLoginSetup();
     } catch (e) {
@@ -3092,12 +3084,12 @@ function renderPoolBuilder() {
   }
 
   const cfgCard = el('div'); cfgCard.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
-  cfgCard.appendChild(el('label', null, 'Buy-in Cost ($)'));
-  const buyInInput = el('input'); buyInInput.type = 'number'; buyInInput.min = '0.5'; buyInInput.step = '0.5'; buyInInput.value = String(poolBuilderBuyIn);
+  cfgCard.appendChild(el('label', null, 'Buy-in (units)'));
+  const buyInInput = el('input'); buyInInput.type = 'number'; buyInInput.min = '1'; buyInInput.step = '1'; buyInInput.value = String(poolBuilderBuyIn);
   buyInInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
   buyInInput.oninput = () => { poolBuilderBuyIn = buyInInput.value; };
   cfgCard.appendChild(buyInInput);
-  cfgCard.appendChild(el('div', 'setup-hint', "Set in real dollars \u2014 whoever joins pays this same dollar amount, converted to their own units automatically."));
+  cfgCard.appendChild(el('div', 'setup-hint', "Whoever joins pays this many units to enter."));
 
   cfgCard.appendChild(el('label', null, 'House units per person (for picking, not real money)'));
   const budgetInput = el('input'); budgetInput.type = 'number'; budgetInput.min = '1'; budgetInput.step = '1'; budgetInput.value = String(poolBuilderBudget);
@@ -3136,13 +3128,12 @@ function renderPoolBuilder() {
 
   submitBtn.onclick = async () => {
     if (!requireFunded('create a pool')) return;
-    if (!requireUnitSize('create a pool')) return;
-    const buyInDollars = parseFloat(buyInInput.value);
+    const buyInUnits = Math.ceil(parseFloat(buyInInput.value));
     const houseUnitsBudget = parseFloat(budgetInput.value);
     const paidPositions = parseInt(paidInput.value, 10);
     const maxUnitsPerPick = parseFloat(maxPerPickInput.value);
     submitErr.textContent = '';
-    if (!buyInDollars || buyInDollars <= 0) { submitErr.textContent = 'Enter a valid buy-in.'; return; }
+    if (!buyInUnits || buyInUnits <= 0) { submitErr.textContent = 'Enter a valid buy-in.'; return; }
     if (!houseUnitsBudget || houseUnitsBudget <= 0) { submitErr.textContent = 'Enter a valid house-unit budget.'; return; }
     if (!paidPositions || paidPositions < 1) { submitErr.textContent = 'Enter at least 1 paid position.'; return; }
     if (!maxUnitsPerPick || maxUnitsPerPick < 1) { submitErr.textContent = 'Max units per pick must be at least 1.'; return; }
@@ -3153,8 +3144,7 @@ function renderPoolBuilder() {
       poolType: 'challenge', propType: 'combo_pool', creator: profile.name,
       sport: poolBuilderLegs[0].sport, gameLabel: poolBuilderLegs.map(l => l.gameLabel).join(' + '),
       legs: poolBuilderLegs.slice(),
-      buyInDollars, houseUnitsBudget, paidPositions, maxUnitsPerPick,
-      creatorUnitSize: profile.unitSize || null,
+      buyInUnits, houseUnitsBudget, paidPositions, maxUnitsPerPick,
       visibility: poolGroupId ? 'group' : rawVis, groupId: poolGroupId,
       status: 'open', participants: [],
       timestamp: new Date().toISOString()
@@ -3250,8 +3240,7 @@ function renderPoolCard(pool) {
     card.style.background = won ? 'rgba(76, 175, 80, 0.08)' : 'rgba(239, 59, 59, 0.08)';
   }
   card.appendChild(el('div', null, pool.gameLabel)).style.cssText = 'font-size:13.5px;font-weight:700;margin-bottom:4px;';
-  const myUnitCost = profile.unitSize ? Math.ceil(pool.buyInDollars / profile.unitSize) : null;
-  card.appendChild(el('div', null, `${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 $${pool.buyInDollars.toFixed(2)} buy-in${myUnitCost !== null ? ` (${myUnitCost}u for you)` : ''} \u00b7 ${pool.houseUnitsBudget} house units (max ${pool.maxUnitsPerPick || pool.houseUnitsBudget}/pick) \u00b7 top ${pool.paidPositions} paid`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:6px;';
+  card.appendChild(el('div', null, `${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 ${pool.buyInUnits}u buy-in \u00b7 ${pool.houseUnitsBudget} house units (max ${pool.maxUnitsPerPick || pool.houseUnitsBudget}/pick) \u00b7 top ${pool.paidPositions} paid`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:6px;';
   const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 Friends only');
   card.appendChild(el('div', null, `Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
 
@@ -3272,7 +3261,7 @@ function renderPoolCard(pool) {
         const refundTx = {
           id: profile.name + '_accounttx_poolleave_' + pool.id + '_' + Date.now(),
           poolType: 'accountTx', player: profile.name,
-          type: 'deposit', amount: pool.buyInDollars,
+          type: 'deposit', amount: pool.buyInUnits,
           note: `Buy-in refunded \u2014 left pool`,
           relatedChallengeId: pool.id,
           timestamp: new Date().toISOString()
@@ -3333,6 +3322,8 @@ function renderPoolCard(pool) {
     card.appendChild(legsWrap);
   }
 
+  card.appendChild(renderCommentsSection({ id: pool.id }, pool.sport));
+
   if (isCreator && pool.status === 'open') {
     const delBtn = el('button', null, '\u2715 Delete this pool');
     delBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
@@ -3392,10 +3383,9 @@ function renderPoolJoinForm(pool) {
   wrap.appendChild(el('div', null, `${totalUsed} / ${pool.houseUnitsBudget} house units used`)).style.cssText = 'font-size:12px;font-weight:700;color:var(--text-dim);margin-bottom:8px;';
 
   const errEl = el('div', 'pick-error');
-  const joinBtn = el('button', 'lock-btn', `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.ceil(pool.buyInDollars/profile.unitSize)) + 'u' : ''})`);
+  const joinBtn = el('button', 'lock-btn', `Join Pool (${pool.buyInUnits}u buy-in)`);
   joinBtn.onclick = async () => {
     if (!requireFunded('join a pool')) return;
-    if (!requireUnitSize('join a pool')) return;
     errEl.textContent = '';
     const missingSide = pool.legs.some(leg => !poolJoinSides[poolLegKey(leg)]);
     if (missingSide) { errEl.textContent = 'Pick a side for every game.'; return; }
@@ -3405,13 +3395,13 @@ function renderPoolJoinForm(pool) {
     joinBtn.disabled = true; joinBtn.textContent = 'Joining…';
     const picks = pool.legs.map(leg => ({ gameId: leg.gameId, betType: leg.betType, playerName: leg.playerName, statCategory: leg.statCategory, sideAbbr: poolJoinSides[poolLegKey(leg)], confUnits: poolJoinUnits[poolLegKey(leg)] || 1 }));
     const idx = allPicks.findIndex(p => p.id === pool.id);
-    if (idx === -1) { errEl.textContent = 'Pool no longer exists.'; joinBtn.disabled = false; joinBtn.textContent = `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.ceil(pool.buyInDollars/profile.unitSize)) + 'u' : ''})`; return; }
+    if (idx === -1) { errEl.textContent = 'Pool no longer exists.'; joinBtn.disabled = false; joinBtn.textContent = `Join Pool (${pool.buyInUnits}u buy-in)`; return; }
     if (!allPicks[idx].participants) allPicks[idx].participants = [];
     allPicks[idx].participants.push({ name: profile.name, uid: profile.uid, picks, joinedAt: new Date().toISOString() });
     const reserveTx = {
       id: profile.name + '_accounttx_pooljoin_' + pool.id,
       poolType: 'accountTx', player: profile.name,
-      type: 'withdraw', amount: pool.buyInDollars,
+      type: 'withdraw', amount: pool.buyInUnits,
       note: `Pool buy-in \u2014 ${pool.gameLabel}`,
       relatedChallengeId: pool.id,
       timestamp: new Date().toISOString()
@@ -3425,7 +3415,7 @@ function renderPoolJoinForm(pool) {
       allPicks[idx].participants.pop();
       allPicks.pop();
       errEl.textContent = "Couldn't join (" + describeFetchError(e) + ") — try again.";
-      joinBtn.disabled = false; joinBtn.textContent = `Join Pool ($${pool.buyInDollars.toFixed(2)}${profile.unitSize ? ' = ' + (Math.ceil(pool.buyInDollars/profile.unitSize)) + 'u' : ''})`;
+      joinBtn.disabled = false; joinBtn.textContent = `Join Pool (${pool.buyInUnits}u buy-in)`;
     }
   };
   wrap.appendChild(joinBtn);
@@ -3434,12 +3424,6 @@ function renderPoolJoinForm(pool) {
 }
 function renderGames() {
   const wrap = el('div');
-  if (!profile.unitSize) {
-    const warn = el('div', 'setup-hint');
-    warn.style.cssText = 'background:var(--surface);border:1px solid var(--danger);border-radius:8px;padding:10px 12px;margin-bottom:10px;color:var(--text);';
-    warn.innerHTML = '\u26a0\ufe0f You need to set a unit size in Profile before you can create or accept challenges.';
-    wrap.appendChild(warn);
-  }
 
   const scroller = el('div', 'league-scroller');
   const orderedLeagues = LEAGUES_META.slice().sort((a, b) => (a.active === b.active) ? 0 : (a.active ? -1 : 1));
@@ -3618,7 +3602,6 @@ function renderGolfSection() {
 
   createBtn.onclick = async () => {
     if (!requireFunded('create a challenge')) return;
-    if (!requireUnitSize('create a challenge')) return;
     const units = Math.ceil(parseFloat(unitsInput.value));
     errEl.textContent = '';
     if (!selA.value || !selB.value || selA.value === selB.value) { errEl.textContent = 'Pick two different players.'; return; }
@@ -3633,7 +3616,6 @@ function renderGolfSection() {
       sport: 'pga', gameLabel: field.tournamentName, tournamentId: field.tournamentId,
       playerA: selA.value, playerB: selB.value, sideAbbr: displaySide, units, round: roundSel.value,
       oddsMultiplier: draft.oddsMultiplier, originalOddsMultiplier: 1,
-      creatorUnitSize: profile.unitSize || null,
       visibility: groupId ? 'group' : (friend ? 'friend' : 'public'),
       groupId, targetFriend: groupId ? null : friend, status: 'open', acceptedBy: null,
       timestamp: new Date().toISOString()
@@ -3918,7 +3900,6 @@ function renderCounterForm(ch) {
 
   sendBtn.onclick = async () => {
     if (!requireFunded('counter a challenge')) return;
-    if (!requireUnitSize('counter a challenge')) return;
     const units = Math.ceil(parseFloat(unitsInput.value));
     errEl.textContent = '';
     if (!units || units <= 0) { errEl.textContent = 'Enter a valid unit amount.'; return; }
@@ -3939,7 +3920,6 @@ function renderCounterForm(ch) {
       id: profile.name + '_counter_' + ch.id + '_' + Date.now(),
       creator: profile.name, targetFriend: ch.creator, visibility: 'friend',
       units, line, spreadLabel, oddsMultiplier: hasOdds ? oddsMultiplier : 1,
-      creatorUnitSize: profile.unitSize || null,
       status: 'open', acceptedBy: null,
       counterOf: ch.id,
       timestamp: new Date().toISOString()
@@ -3975,18 +3955,15 @@ async function deleteChallenge(ch) {
   const idx = allPicks.findIndex(p => p.id === ch.id);
   if (idx === -1) return;
   const removed = allPicks.splice(idx, 1)[0];
-  let refundTx = null;
-  if (profile.unitSize) {
-    refundTx = {
-      id: profile.name + '_accounttx_refund_' + ch.id,
-      poolType: 'accountTx', player: profile.name,
-      type: 'deposit', amount: ch.units * profile.unitSize,
-      note: `Stake refunded \u2014 ${challengeMarketTxt(ch)}`,
-      relatedChallengeId: ch.id,
-      timestamp: new Date().toISOString()
-    };
-    allPicks.push(refundTx);
-  }
+  const refundTx = {
+    id: profile.name + '_accounttx_refund_' + ch.id,
+    poolType: 'accountTx', player: profile.name,
+    type: 'deposit', amount: ch.units,
+    note: `Stake refunded \u2014 ${challengeMarketTxt(ch)}`,
+    relatedChallengeId: ch.id,
+    timestamp: new Date().toISOString()
+  };
+  allPicks.push(refundTx);
   try { await savePicks(allPicks); render(); }
   catch (e) { allPicks.splice(idx, 0, removed); if (refundTx) allPicks.pop(); alert("Couldn't delete (" + describeFetchError(e) + ") — try again."); }
 }
@@ -4061,7 +4038,6 @@ async function topUpHouseChallenges() {
 
 async function acceptChallenge(ch) {
   if (!requireFunded('accept a challenge')) return;
-  if (!requireUnitSize('accept a challenge')) return;
   const idx = allPicks.findIndex(p => p.id === ch.id);
   if (idx === -1) return;
   const prev = { ...allPicks[idx] };
@@ -4079,20 +4055,17 @@ async function declineChallenge(ch) {
   if (idx === -1) return;
   const prev = { ...allPicks[idx] };
   allPicks[idx].status = 'declined';
-  let refundTx = null;
-  if (ch.creatorUnitSize) {
-    refundTx = {
-      id: ch.creator + '_accounttx_refund_' + ch.id,
-      poolType: 'accountTx', player: ch.creator,
-      type: 'deposit', amount: ch.units * ch.creatorUnitSize,
-      note: `Stake refunded \u2014 declined`,
-      relatedChallengeId: ch.id,
-      timestamp: new Date().toISOString()
-    };
-    allPicks.push(refundTx);
-  }
+  const refundTx = {
+    id: ch.creator + '_accounttx_refund_' + ch.id,
+    poolType: 'accountTx', player: ch.creator,
+    type: 'deposit', amount: ch.units,
+    note: `Stake refunded \u2014 declined`,
+    relatedChallengeId: ch.id,
+    timestamp: new Date().toISOString()
+  };
+  allPicks.push(refundTx);
   try { await savePicks(allPicks); render(); }
-  catch (e) { allPicks[idx] = prev; if (refundTx) allPicks.pop(); alert("Couldn't decline (" + describeFetchError(e) + ") — try again."); render(); }
+  catch (e) { allPicks[idx] = prev; allPicks.pop(); alert("Couldn't decline (" + describeFetchError(e) + ") — try again."); render(); }
 }
 
 function renderSwipeCard(ch) {
@@ -4158,7 +4131,7 @@ function renderSwipeCard(ch) {
   cardWrap.appendChild(card);
 
   function doDecline() { swipeStack.shift(); recordSwipeSkip(ch.id); render(); }
-  function doAccept() { if (!requireFunded('accept a challenge')) return; if (!requireUnitSize('accept a challenge')) return; swipeCart.push(ch); swipeStack.shift(); recordSwipeCartAdd(ch.id); render(); }
+  function doAccept() { if (!requireFunded('accept a challenge')) return; swipeCart.push(ch); swipeStack.shift(); recordSwipeCartAdd(ch.id); render(); }
   cardWrap._doAccept = doAccept;
   cardWrap._doDecline = doDecline;
 
@@ -4292,7 +4265,6 @@ function renderSwipeCart() {
   confirmBtn.style.marginTop = '12px';
   confirmBtn.onclick = async () => {
     if (!requireFunded('accept a challenge')) return;
-  if (!requireUnitSize('accept a challenge')) return;
     confirmBtn.disabled = true; confirmBtn.textContent = 'Saving…';
     const snapshot = swipeCart.slice();
     const snapshotUnits = totalCartUnits;
@@ -4387,14 +4359,6 @@ function renderExistingChallenges() {
     if (ch.propType === 'golf_h2h' && golfFieldCache && golfFieldCache.tournamentId === ch.tournamentId && golfFieldCache.date) return new Date(golfFieldCache.date);
     return null;
   }
-  function matchesPriceTier(units, tier) {
-    if (tier === 'all') return true;
-    if (tier === '1') return units >= 1 && units <= 25;
-    if (tier === '2') return units >= 26 && units <= 50;
-    if (tier === '3') return units >= 51 && units <= 75;
-    if (tier === '4') return units >= 76 && units <= 100;
-    return true;
-  }
   function matchesTypeVal(ch, typeVal) {
     if (typeVal === 'all') return true;
     if (typeVal === 'player') return ch.propType === 'player';
@@ -4408,12 +4372,10 @@ function renderExistingChallenges() {
     const leagueVal = 'league' in o ? o.league : openChallengeLeague;
     const dateVal = 'date' in o ? o.date : openChallengeDateFilter;
     const typeVal = 'type' in o ? o.type : openChallengeTypeFilter;
-    const priceVal = 'price' in o ? o.price : openChallengePriceTier;
     let list = reviewableBase;
     if (leagueVal !== null) list = list.filter(ch => ch.sport === leagueVal);
     list = list.filter(ch => matchesDateFilterVal(resolvedDate(ch), dateVal));
     list = list.filter(ch => matchesTypeVal(ch, typeVal));
-    list = list.filter(ch => matchesPriceTier(displayUnitsFor(ch), priceVal));
     return list;
   }
 
@@ -4452,14 +4414,6 @@ function renderExistingChallenges() {
     typeScroller.appendChild(pill);
   });
 
-  const maxUnitsScroller = el('div', 'league-scroller');
-  [['all','All Prices'],['1','$'],['2','$$'],['3','$$$'],['4','$$$$']].forEach(([id,label]) => {
-    const count = applyFilters({ price: id }).length;
-    const pill = el('button', 'league-pill' + (openChallengePriceTier === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
-    pill.onclick = () => { openChallengePriceTier = id; swipeStackInitialized = false; render(); };
-    maxUnitsScroller.appendChild(pill);
-  });
-
   const list = applyFilters({});
 
   let gameFilterRow = null;
@@ -4495,7 +4449,7 @@ function renderExistingChallenges() {
   }
   const rows = [leagueScroller, dateScroller];
   if (gameFilterRow) rows.push(gameFilterRow);
-  rows.push(typeScroller, maxUnitsScroller);
+  rows.push(typeScroller);
   return renderSwipeMode(rows);
 }
 
@@ -4579,22 +4533,14 @@ function myChallengeOutcome(ch) {
   return iAmCreator ? 'win' : 'loss';
 }
 function convertedUnitsForViewer(ch) {
-  // What it would actually cost the current viewer to accept this, preserving real-dollar equivalence with
-  // what the creator staked. Falls back to the raw unit count if either side hasn't set a unit size — there's
-  // no dollar basis to convert from/to in that case, so we can't do better than showing the number as posted.
-  if (!ch.creatorUnitSize || !profile.unitSize) return Math.ceil(ch.units);
-  return Math.ceil(ch.units * ch.creatorUnitSize / profile.unitSize);
+  // Units are a single shared currency now — what the creator staked is exactly what it costs to accept.
+  return ch.units;
 }
 function displayUnitsFor(ch) {
   const iAmCreator = ch.creator === profile.name;
   if (iAmCreator) return ch.units;
   if (ch.status === 'accepted') return ch.acceptorUnits != null ? ch.acceptorUnits : ch.units;
-  return convertedUnitsForViewer(ch); // still open — show what it would actually cost me to accept
-}
-function requireUnitSize(actionLabel) {
-  if (profile.unitSize) return true;
-  alert(`Set today's risk amount above $0 before you can ${actionLabel || 'do this'}. You'll get asked for this each day the app opens.`);
-  return false;
+  return ch.units;
 }
 function requireFunded(actionLabel) {
   if (accountBalanceFor(profile.name) > 0) return true;
@@ -4983,7 +4929,6 @@ function renderGameCard(g, sport, meta) {
 
     createBtn.onclick = async () => {
       if (!requireFunded('create a challenge')) return;
-      if (!requireUnitSize('create a challenge')) return;
       const side = selectedSide[key];
       const units = Math.ceil(parseFloat(unitsInput.value));
       errEl.textContent = '';
@@ -5044,7 +4989,6 @@ function renderGameCard(g, sport, meta) {
         betType, sideAbbr: displaySide, units, line, spreadLabel,
         oddsMultiplier: (betType === 'spread' || betType === 'moneyline') ? oddsMultiplier : 1,
         originalLine, originalSpreadLabel, originalOddsMultiplier: 1,
-        creatorUnitSize: profile.unitSize || null,
         visibility: groupId ? 'group' : (friend ? 'friend' : 'public'),
         groupId, targetFriend: groupId ? null : friend, status: 'open', acceptedBy: null,
         timestamp: new Date().toISOString()
@@ -5176,7 +5120,6 @@ function renderGameCard(g, sport, meta) {
 
     createBtn2.onclick = async () => {
       if (!requireFunded('create a challenge')) return;
-    if (!requireUnitSize('create a challenge')) return;
       const playerName = nameSel ? nameSel.value : (nameInput ? nameInput.value.trim() : '');
       const line = parseFloat(lineInput.value);
       const units = Math.ceil(parseFloat(unitsInput2.value));
@@ -5194,7 +5137,6 @@ function renderGameCard(g, sport, meta) {
         poolType: 'challenge', propType: 'player', creator: profile.name,
         sport, gameId: g.id, gameLabel: g.away + ' @ ' + g.home,
         playerName, statCategory: catSel.value, sideAbbr: displaySide, line, units,
-        creatorUnitSize: profile.unitSize || null,
         visibility: groupId ? 'group' : (friend ? 'friend' : 'public'),
         groupId, targetFriend: groupId ? null : friend, status: 'open', acceptedBy: null,
         timestamp: new Date().toISOString()
@@ -5304,7 +5246,7 @@ function computePoolPayouts(pool) {
   if (!participants.length) return [];
   const scored = participants.map(p => ({ name: p.name, ...poolParticipantScore(pool, p) }));
   if (scored.some(s => !s.allSettled)) return null; // not everyone's games are final yet
-  const purse = pool.buyInDollars * participants.length;
+  const purse = pool.buyInUnits * participants.length;
   const perSlot = purse / pool.paidPositions;
   scored.sort((a,b) => b.total - a.total);
   const payouts = [];
@@ -5355,7 +5297,7 @@ async function persistNewlySettledComboPool() {
   return changed;
 }
 async function persistPoolPayoutToMe() {
-  if (!profile || !profile.unitSize) return false;
+  if (!profile) return false;
   let changed = false;
   const settledPools = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool' && p.status === 'settled' && (p.participants || []).some(pt => pt.name === profile.name));
   for (const pool of settledPools) {
@@ -5613,18 +5555,17 @@ async function persistNewlySettledGolfH2H() {
 }
 
 function reserveChallengeStake(ch, role, stakeUnits) {
-  if (!profile.unitSize) return null;
   return {
     id: profile.name + '_accounttx_reserve_' + ch.id + '_' + role,
     poolType: 'accountTx', player: profile.name,
-    type: 'withdraw', amount: stakeUnits * profile.unitSize,
+    type: 'withdraw', amount: stakeUnits,
     note: `Stake reserved \u2014 ${challengeMarketTxt(ch)}`,
     relatedChallengeId: ch.id,
     timestamp: new Date().toISOString()
   };
 }
 async function persistAccountAdjustmentsForChallenges() {
-  if (!profile || !profile.unitSize) return false; // nothing to convert without a unit size set
+  if (!profile) return false;
   let changed = false;
   const mine = allPicks.filter(p => p.poolType === 'challenge' && p.status === 'accepted' && (p.creator === profile.name || p.acceptedBy === profile.name));
   for (const ch of mine) {
@@ -5639,7 +5580,7 @@ async function persistAccountAdjustmentsForChallenges() {
       const tx = {
         id: profile.name + '_accounttx_challenge_' + ch.id,
         poolType: 'accountTx', player: profile.name,
-        type: 'deposit', amount: creditBack * profile.unitSize,
+        type: 'deposit', amount: creditBack,
         note: `Challenge result \u2014 ${challengeMarketTxt(ch)}`,
         relatedChallengeId: ch.id,
         timestamp: new Date().toISOString()
@@ -5687,8 +5628,8 @@ async function resetMyAccountOnce() {
     try { await savePicks(allPicks); } catch (e) { return; /* retry next load if save failed */ }
   }
   try {
-    await saveProfileDoc(profile.uid, { dailyRiskDate: null, dailyRiskAmount: null, unitSize: null });
-    saveProfile({ ...profile, dailyRiskDate: null, dailyRiskAmount: null, unitSize: null });
+    await saveProfileDoc(profile.uid, { dailyRiskDate: null, dailyRiskAmount: null });
+    saveProfile({ ...profile, dailyRiskDate: null, dailyRiskAmount: null });
   } catch (e) { return; }
   try { localStorage.setItem(FLAG, '1'); } catch (e) {}
 }
