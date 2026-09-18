@@ -1481,6 +1481,43 @@ function renderFriendsScreen() {
     });
   }
 
+  // ---- your friends list ----
+  wrap.appendChild(el('div', 'week-header', `Your friends (${myFriends.length})`));
+  if (!myFriends.length) {
+    wrap.appendChild(el('div', 'empty', 'No friends added yet — search below to add some.'));
+  } else {
+    myFriends.forEach(f => {
+      const row = el('div', 'pick-row');
+      row.style.cursor = 'pointer';
+      const left = el('div');
+      left.appendChild(el('div', 'who', f.name));
+      left.appendChild(el('div', 'detail', '@' + f.username));
+      row.appendChild(left);
+      const rmBtn = el('button', null, '\u2715');
+      rmBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;width:28px;height:28px;font-size:12px;';
+      rmBtn.onclick = async (e) => {
+        e.stopPropagation();
+        if (!confirm(`Remove ${f.name} from your friends?`)) return;
+        const updated = myFriends.filter(x => x.uid !== f.uid);
+        try {
+          await saveProfileDoc(profile.uid, { friends: updated });
+          saveProfile({ ...profile, friends: updated });
+          render();
+        } catch (err) { alert("Couldn't remove (" + describeFetchError(err) + ") — try again."); }
+      };
+      row.onclick = () => { friendProfileView = friendProfileView === f.uid ? null : f.uid; render(); };
+      row.appendChild(rmBtn);
+      wrap.appendChild(row);
+
+      if (friendProfileView === f.uid) {
+        const full = (allProfilesCache || []).find(p => p.uid === f.uid) || f;
+        const detail = el('div', 'locked-note');
+        detail.innerHTML = `<div class="ln-title">${full.name}</div>@${full.username}`;
+        wrap.appendChild(detail);
+      }
+    });
+  }
+
   // ---- search ----
   const searchCard = el('div', 'setup-card');
   searchCard.appendChild(el('div', null, 'Find people')).style.cssText = 'font-size:14px;font-weight:800;margin-bottom:6px;';
@@ -1536,42 +1573,6 @@ function renderFriendsScreen() {
   searchInput.addEventListener('input', () => { friendSearchQuery = searchInput.value; renderResults(); });
   renderResults();
 
-  // ---- your friends list ----
-  wrap.appendChild(el('div', 'week-header', `Your friends (${myFriends.length})`));
-  if (!myFriends.length) {
-    wrap.appendChild(el('div', 'empty', 'No friends added yet — search above to add some.'));
-  } else {
-    myFriends.forEach(f => {
-      const row = el('div', 'pick-row');
-      row.style.cursor = 'pointer';
-      const left = el('div');
-      left.appendChild(el('div', 'who', f.name));
-      left.appendChild(el('div', 'detail', '@' + f.username));
-      row.appendChild(left);
-      const rmBtn = el('button', null, '\u2715');
-      rmBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;width:28px;height:28px;font-size:12px;';
-      rmBtn.onclick = async (e) => {
-        e.stopPropagation();
-        if (!confirm(`Remove ${f.name} from your friends?`)) return;
-        const updated = myFriends.filter(x => x.uid !== f.uid);
-        try {
-          await saveProfileDoc(profile.uid, { friends: updated });
-          saveProfile({ ...profile, friends: updated });
-          render();
-        } catch (err) { alert("Couldn't remove (" + describeFetchError(err) + ") — try again."); }
-      };
-      row.onclick = () => { friendProfileView = friendProfileView === f.uid ? null : f.uid; render(); };
-      row.appendChild(rmBtn);
-      wrap.appendChild(row);
-
-      if (friendProfileView === f.uid) {
-        const full = (allProfilesCache || []).find(p => p.uid === f.uid) || f;
-        const detail = el('div', 'locked-note');
-        detail.innerHTML = `<div class="ln-title">${full.name}</div>@${full.username}`;
-        wrap.appendChild(detail);
-      }
-    });
-  }
   return wrap;
 }
 
@@ -2147,7 +2148,7 @@ function renderPoolsSection() {
   const yourPools = allPools.filter(p => p.status !== 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
   const friendNames = new Set((profile.friends || []).map(f => f.name));
   const openPools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
-    p.visibility === 'public' || (p.visibility === 'friend' && friendNames.has(p.creator)) || isMyGroupChallenge(p)
+    p.visibility === 'public' || (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
   ));
 
   const yourHeader = el('div', 'week-header', `${poolsYourOpen ? '\u25be' : '\u25b8'} My Pools (${yourPools.length})`);
@@ -2839,6 +2840,51 @@ function renderPoolBuilder() {
   nameInput.oninput = () => { poolBuilderName = nameInput.value; };
   wrap.appendChild(nameInput);
 
+  wrap.appendChild(el('label', null, 'Send To'));
+  const sendToSel = el('select');
+  sendToSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;box-sizing:border-box;margin-bottom:8px;';
+  [['public','\ud83d\udce2 Public (anyone)'],['group','\ud83d\udc65 A Pool Group'],['individual','\ud83d\udc64 An Individual']].forEach(([v,l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; sendToSel.appendChild(o); });
+  const myGroupsForPool = allPicks.filter(p => p.poolType === 'friendGroup' && (p.members||[]).some(m=>m.uid===profile.uid));
+  let sendToKind = 'public', groupSelValue = myGroupsForPool[0] ? myGroupsForPool[0].id : '', friendSelValue = (profile.friends||[])[0] ? (profile.friends||[])[0].name : '';
+  if (poolBuilderVisibility.startsWith('group:')) { sendToKind = 'group'; groupSelValue = poolBuilderVisibility.slice(6); }
+  else if (poolBuilderVisibility.startsWith('individual:')) { sendToKind = 'individual'; friendSelValue = poolBuilderVisibility.slice(11); }
+  sendToSel.value = sendToKind;
+  wrap.appendChild(sendToSel);
+
+  const groupSubSel = el('select');
+  groupSubSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;box-sizing:border-box;margin-bottom:4px;';
+  myGroupsForPool.forEach(grp => { const o = document.createElement('option'); o.value = grp.id; o.textContent = grp.name; groupSubSel.appendChild(o); });
+  groupSubSel.value = groupSelValue;
+
+  const friendSubSel = el('select');
+  friendSubSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;box-sizing:border-box;margin-bottom:4px;';
+  (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = f.name; friendSubSel.appendChild(o); });
+  friendSubSel.value = friendSelValue;
+
+  function syncPoolBuilderVisibility() {
+    if (sendToSel.value === 'group') poolBuilderVisibility = 'group:' + groupSubSel.value;
+    else if (sendToSel.value === 'individual') poolBuilderVisibility = 'individual:' + friendSubSel.value;
+    else poolBuilderVisibility = 'public';
+  }
+  function updateSendToSubSelects() {
+    groupSubSel.style.display = sendToSel.value === 'group' ? 'block' : 'none';
+    friendSubSel.style.display = sendToSel.value === 'individual' ? 'block' : 'none';
+  }
+  updateSendToSubSelects();
+  syncPoolBuilderVisibility();
+  sendToSel.onchange = () => { updateSendToSubSelects(); syncPoolBuilderVisibility(); };
+  groupSubSel.onchange = syncPoolBuilderVisibility;
+  friendSubSel.onchange = syncPoolBuilderVisibility;
+  wrap.appendChild(groupSubSel);
+  wrap.appendChild(friendSubSel);
+
+  if (!myGroupsForPool.length) {
+    const goToGroupsLink = el('div', null, "Don't have a group yet? Create one on the Friends page \u2192");
+    goToGroupsLink.style.cssText = 'font-size:11px;color:var(--accent);font-weight:700;cursor:pointer;margin-top:-2px;margin-bottom:8px;';
+    goToGroupsLink.onclick = () => { appSection = 'friends'; render(); };
+    wrap.appendChild(goToGroupsLink);
+  }
+
   if (poolBuilderLegs.length) {
     poolBuilderLegs.forEach((leg, i) => {
       const row = el('div', 'pick-row');
@@ -3021,18 +3067,6 @@ function renderPoolBuilder() {
   paidInput.oninput = () => { poolBuilderPaid = paidInput.value; };
   cfgCard.appendChild(paidInput);
 
-  cfgCard.appendChild(el('label', null, 'Who can join'));
-  const visSel = el('select');
-  visSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;box-sizing:border-box;';
-  [['public','\ud83d\udce2 Anyone (public)'],['friend','\ud83d\udc64 Friends only']].forEach(([v,l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; visSel.appendChild(o); });
-  (allPicks.filter(p => p.poolType === 'friendGroup' && (p.members||[]).some(m=>m.uid===profile.uid))).forEach(grp => { const o = document.createElement('option'); o.value = 'group:' + grp.id; o.textContent = '\ud83d\udc65 ' + grp.name; visSel.appendChild(o); });
-  visSel.value = poolBuilderVisibility;
-  visSel.onchange = () => { poolBuilderVisibility = visSel.value; };
-  cfgCard.appendChild(visSel);
-  const goToGroupsLink = el('div', null, "Don't see a group? Create one on the Friends page \u2192");
-  goToGroupsLink.style.cssText = 'font-size:11px;color:var(--accent);font-weight:700;cursor:pointer;margin-top:6px;';
-  goToGroupsLink.onclick = () => { appSection = 'friends'; render(); };
-  cfgCard.appendChild(goToGroupsLink);
   wrap.appendChild(cfgCard);
 
   const submitBtn = el('button', 'lock-btn', 'Submit Pool');
@@ -3052,8 +3086,10 @@ function renderPoolBuilder() {
     if (!houseUnitsBudget || houseUnitsBudget <= 0) { submitErr.textContent = 'Enter a valid house-unit budget.'; return; }
     if (!paidPositions || paidPositions < 1) { submitErr.textContent = 'Enter at least 1 paid position.'; return; }
     if (!maxUnitsPerPick || maxUnitsPerPick < 1) { submitErr.textContent = 'Max units per pick must be at least 1.'; return; }
-    const rawVis = visSel.value;
+    const rawVis = poolBuilderVisibility;
     const poolGroupId = rawVis.startsWith('group:') ? rawVis.slice(6) : null;
+    const poolTargetFriend = rawVis.startsWith('individual:') ? rawVis.slice(11) : null;
+    const poolVisibility = poolGroupId ? 'group' : (poolTargetFriend ? 'friend' : 'public');
     const pool = {
       id: profile.name + '_pool_' + Date.now(),
       poolType: 'challenge', propType: 'combo_pool', creator: profile.name,
@@ -3061,7 +3097,7 @@ function renderPoolBuilder() {
       name: poolBuilderName.trim() || null,
       legs: poolBuilderLegs.slice(),
       buyInUnits, houseUnitsBudget, paidPositions, maxUnitsPerPick,
-      visibility: poolGroupId ? 'group' : rawVis, groupId: poolGroupId,
+      visibility: poolVisibility, groupId: poolGroupId, targetFriend: poolTargetFriend,
       status: 'open', participants: [],
       timestamp: new Date().toISOString()
     };
@@ -3158,7 +3194,7 @@ function renderPoolCard(pool) {
   }
   card.appendChild(el('div', null, pool.name || pool.gameLabel)).style.cssText = 'font-size:13.5px;font-weight:700;margin-bottom:4px;';
   card.appendChild(el('div', null, `${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 ${pool.buyInUnits}u buy-in \u00b7 ${pool.houseUnitsBudget} house units (max ${pool.maxUnitsPerPick || pool.houseUnitsBudget}/pick) \u00b7 top ${pool.paidPositions} paid`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:6px;';
-  const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 Friends only');
+  const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 ' + (pool.targetFriend || 'Individual'));
   card.appendChild(el('div', null, `Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
 
   if (pool.status === 'settled') {
