@@ -403,6 +403,7 @@ function markAcceptedChallengesSeen() {
   if (changed) { try { localStorage.setItem('ww_seen_accepted', JSON.stringify([...seen])); } catch (e) {} }
 }
 let poolBuilderLegs = []; // [{sport, gameId, gameLabel, betType, sideAbbr, line, spreadLabel, displayText}]
+let poolLegDraft = { league: '', gameId: '', betType: '', propName: '', propCat: '', propLine: '' };
 let poolBuilderBuyIn = 10;
 let poolBuilderBudget = 10;
 let poolBuilderMaxPerPick = 10;
@@ -2956,6 +2957,7 @@ function renderPoolBuilder() {
   const leagueSel = el('select');
   leagueSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
   LEAGUES_META.filter(l => l.active && !l.isGolf).forEach(lg => { const o = document.createElement('option'); o.value = lg.id; o.textContent = lg.label; leagueSel.appendChild(o); });
+  if (poolLegDraft.league) leagueSel.value = poolLegDraft.league;
   addCard.appendChild(leagueSel);
 
   addCard.appendChild(el('label', null, 'Game'));
@@ -2993,6 +2995,7 @@ function renderPoolBuilder() {
       o.textContent = `${fullTeamName2(sport, g, g.away)} @ ${fullTeamName2(sport, g, g.home)}`;
       gameSel.appendChild(o);
     });
+    if (poolLegDraft.league === sport && poolLegDraft.gameId && games.some(g => g.id === poolLegDraft.gameId)) gameSel.value = poolLegDraft.gameId;
     rebuildMarketOptions();
   }
   function fullTeamName2(sport, g, abbr) { return (g.teams && g.teams[abbr] && g.teams[abbr].name) || abbr; }
@@ -3012,6 +3015,7 @@ function renderPoolBuilder() {
     { const o = document.createElement('option'); o.value = 'moneyline'; o.textContent = 'Moneyline'; marketSel.appendChild(o); }
     if (!moneylineOnly && totalVal !== null && totalVal !== undefined) { const o = document.createElement('option'); o.value = 'total'; o.textContent = 'Total'; marketSel.appendChild(o); }
     if (PLAYER_PROP_CATEGORIES.some(c => c.sport === sport)) { const o = document.createElement('option'); o.value = 'playerprop'; o.textContent = 'Player Prop'; marketSel.appendChild(o); }
+    if (poolLegDraft.league === sport && poolLegDraft.gameId === g.id && poolLegDraft.betType && [...marketSel.options].some(o => o.value === poolLegDraft.betType)) marketSel.value = poolLegDraft.betType;
     updatePropFieldsVisibility();
   }
   function updatePropFieldsVisibility() {
@@ -3021,6 +3025,8 @@ function renderPoolBuilder() {
     propFieldsWrap.style.display = 'block';
     propCatSel.innerHTML = '';
     PLAYER_PROP_CATEGORIES.filter(c => c.sport === sport).forEach(c => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.label; propCatSel.appendChild(o); });
+    if (poolLegDraft.propCat && [...propCatSel.options].some(o => o.value === poolLegDraft.propCat)) propCatSel.value = poolLegDraft.propCat;
+    propLineInput.value = poolLegDraft.propLine || '';
     propNameSel.innerHTML = '<option value="">Loading players…</option>';
     Promise.all([fetchTeamRoster(g.away, sport), fetchTeamRoster(g.home, sport)]).then(([awayRoster, homeRoster]) => {
       propNameSel.innerHTML = '';
@@ -3031,11 +3037,16 @@ function renderPoolBuilder() {
         roster.forEach(p => { const o = document.createElement('option'); o.value = p.name; o.textContent = `${p.name} (${p.position})`; grp.appendChild(o); });
         propNameSel.appendChild(grp);
       });
+      if (poolLegDraft.propName && [...propNameSel.options].some(o => o.value === poolLegDraft.propName)) propNameSel.value = poolLegDraft.propName;
     });
   }
-  leagueSel.onchange = () => { rebuildGameOptions(); };
-  gameSel.onchange = () => { rebuildMarketOptions(); };
-  marketSel.onchange = () => { updatePropFieldsVisibility(); };
+  leagueSel.onchange = () => { poolLegDraft.league = leagueSel.value; poolLegDraft.gameId = ''; poolLegDraft.betType = ''; rebuildGameOptions(); };
+  gameSel.onchange = () => { poolLegDraft.gameId = gameSel.value; poolLegDraft.betType = ''; rebuildMarketOptions(); };
+  marketSel.onchange = () => { poolLegDraft.betType = marketSel.value; updatePropFieldsVisibility(); };
+  propCatSel.onchange = () => { poolLegDraft.propCat = propCatSel.value; };
+  propNameSel.onchange = () => { poolLegDraft.propName = propNameSel.value; };
+  propLineInput.oninput = () => { poolLegDraft.propLine = propLineInput.value; };
+  if (!poolLegDraft.league) poolLegDraft.league = leagueSel.value;
   rebuildGameOptions();
 
   const addLegBtn = el('button', null, '+ Add to Pool');
@@ -3064,6 +3075,7 @@ function renderPoolBuilder() {
         sport, gameId: g.id, gameLabel: g.away + ' @ ' + g.home, betType, playerName, statCategory, line,
         displayText: `${fullTeamName2(sport, g, g.away)} @ ${fullTeamName2(sport, g, g.home)}: ${playerName} ${catLabel} (${line})`
       });
+      poolLegDraft = { league: sport, gameId: '', betType: '', propName: '', propCat: '', propLine: '' };
       render();
       return;
     }
@@ -3073,6 +3085,7 @@ function renderPoolBuilder() {
       sport, gameId: g.id, gameLabel: g.away + ' @ ' + g.home, betType,
       displayText: `${fullTeamName2(sport, g, g.away)} @ ${fullTeamName2(sport, g, g.home)}: ${marketLabel}`
     });
+    poolLegDraft = { league: sport, gameId: '', betType: '', propName: '', propCat: '', propLine: '' };
     render();
   };
 
@@ -3155,6 +3168,7 @@ function renderPoolBuilder() {
       await savePicks(allPicks);
       poolBuilderLegs = [];
       poolBuilderBuyIn = 10; poolBuilderBudget = 10; poolBuilderMaxPerPick = 10; poolBuilderPaid = 1; poolBuilderVisibility = 'public';
+      poolLegDraft = { league: '', gameId: '', betType: '', propName: '', propCat: '', propLine: '' };
       poolBuilderOpen = false;
       poolsYourOpen = true;
       poolJoinTarget = pool.id;
