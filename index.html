@@ -3666,10 +3666,20 @@ function opponentSideView(ch) {
   } else if (ch.betType === 'total' || ch.propType === 'player') {
     flipped.sideAbbr = ch.sideAbbr === 'OVER' ? 'UNDER' : 'OVER';
   } else {
+    let otherTeam = null;
     const idx = gameIndex[ch.gameId];
     if (idx && idx.game) {
-      flipped.sideAbbr = ch.sideAbbr === idx.game.home ? idx.game.away : idx.game.home;
+      otherTeam = ch.sideAbbr === idx.game.home ? idx.game.away : idx.game.home;
     }
+    if (!otherTeam && ch.gameLabel && ch.gameLabel.includes(' @ ')) {
+      // gameIndex can be stale or missing this game entirely (e.g. it's aged out of the live fetch window) —
+      // fall back to the two team abbreviations already stored on the challenge itself at creation time.
+      const parts = ch.gameLabel.split(' @ ');
+      const awayAbbr = parts[0], homeAbbr = parts[1];
+      if (ch.sideAbbr === awayAbbr) otherTeam = homeAbbr;
+      else if (ch.sideAbbr === homeAbbr) otherTeam = awayAbbr;
+    }
+    if (otherTeam) flipped.sideAbbr = otherTeam;
     if (ch.betType === 'spread' && ch.line !== null && ch.line !== undefined) {
       flipped.line = -ch.line;
       flipped.spreadLabel = ch.spreadLabel === 'PK' ? 'PK' : (ch.line < 0 ? '+' + Math.abs(ch.line) : '-' + Math.abs(ch.line));
