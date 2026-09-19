@@ -387,6 +387,12 @@ let poolsOpenOpen = false;
 let poolsCompletedOpen = false;
 let dailyHousePoolExpanded = false;
 let poolJoinTarget = null; // pool object currently being joined
+let poolSwipeStack = [];
+let poolSwipeCart = [];
+let poolSwipeStackInitialized = false;
+let poolSwipeDeclinedIds = new Set();
+let poolBrowseMode = 'swipe'; // 'swipe' | 'cart'
+let poolInvitesView = 'received'; // 'received' | 'sent'
 let poolJoinedListOpen = {}; // poolId -> bool
 let poolLegsListOpen = {}; // poolId -> bool
 let poolJoinSides = {}; // gameId+betType -> sideAbbr
@@ -853,9 +859,9 @@ function renderInner() {
   } else {
     renderTabs();
     if (activeTab === 'games') main.appendChild(renderGames());
-    else if (activeTab === 'existing') main.appendChild(renderExistingChallenges());
     else if (activeTab === 'requested') main.appendChild(renderRequestedSection());
-    else if (activeTab === 'completed') main.appendChild(renderCompletedChallenges());
+    else if (activeTab === 'active') main.appendChild(renderCompletedChallenges('active'));
+    else if (activeTab === 'settled') main.appendChild(renderCompletedChallenges('completed'));
   }
   window.scrollTo(0, scrollY);
 }
@@ -936,20 +942,19 @@ function renderTabs() {
   bar.className = 'league-scroller';
   if (!profile) return;
   const allCh = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
-  const openCount = allCh.filter(ch => ch.status === 'open' && ch.visibility === 'public' && ch.creator !== profile.name).length;
-  const requestedCount = pendingFriendChallengesForMe().length;
-  const acceptedCount = allCh.filter(ch => ch.status === 'accepted' && (ch.creator === profile.name || ch.acceptedBy === profile.name)).length;
-  const counts = { existing: openCount, requested: requestedCount, completed: acceptedCount };
-  [['existing','Open'],['games','Create'],['requested','Requested'],['completed','Accepted']].forEach(([id,label]) => {
+  const invitesCount = allCh.filter(ch => ch.status === 'open' && ((ch.visibility === 'public' && ch.creator !== profile.name) || pendingFriendChallengesForMe().some(p => p.id === ch.id))).length;
+  const activeCount = allCh.filter(ch => ch.status === 'accepted' && (ch.creator === profile.name || ch.acceptedBy === profile.name) && settlePick(ch).status === 'pending').length;
+  const counts = { requested: invitesCount, active: activeCount };
+  [['games','Create'],['requested','Invites'],['active','Active'],['settled','Completed']].forEach(([id,label]) => {
     const count = counts[id];
     const t = el('button', 'league-pill' + (activeTab === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
     t.style.position = 'relative';
-    t.onclick = () => { activeTab = id; swipeStackInitialized = false; if (id === 'completed') markAcceptedChallengesSeen(); render(); };
+    t.onclick = () => { activeTab = id; swipeStackInitialized = false; if (id === 'active' || id === 'settled') markAcceptedChallengesSeen(); render(); };
     if (id === 'requested' && unseenPendingFriendChallenges().length > 0) {
       const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
       t.appendChild(dot);
     }
-    if (id === 'completed' && newlyAcceptedChallengesForMe().length > 0) {
+    if (id === 'active' && newlyAcceptedChallengesForMe().length > 0) {
       const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
       t.appendChild(dot);
     }
@@ -961,7 +966,7 @@ async function completeLoginSetup() {
   const g = await loadGlobalData();
   players = g.players; allPicks = g.picks; dailySlateData = g.dailySlate;
   appSection = 'pools';
-  activeTab = 'existing';
+  activeTab = 'requested';
   existingChallengeView = 'friends';
   challengeBrowseMode = 'swipe';
   openChallengeLeague = null;
@@ -2138,11 +2143,12 @@ function renderPoolsSection() {
   const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
   const friendNames0 = new Set((profile.friends || []).map(f => f.name));
   const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
-  const joinablePoolsCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
+  const receivedCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
     p.visibility === 'public' || (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
   )).length + (dailyPoolDone ? 0 : 1);
-  const acceptedCount = allPools0.filter(p => p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)).length + (dailyPoolDone ? 1 : 0);
-  [['create','Create'],['requested', joinablePoolsCount > 0 ? `Requested (${joinablePoolsCount})` : 'Requested'],['accepted', `Active (${acceptedCount})`]].forEach(([id,label]) => {
+  const activeCount = allPools0.filter(p => p.status !== 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name))).length;
+  const completedCount = allPools0.filter(p => p.status === 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name))).length + (dailyPoolDone ? 1 : 0);
+  [['create','Create'],['requested', receivedCount > 0 ? `Invites (${receivedCount})` : 'Invites'],['accepted', `Active (${activeCount})`],['settled', `Completed (${completedCount})`]].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (poolsActiveTab === id ? ' active' : ''), label);
     pill.onclick = () => { poolsActiveTab = id; poolBuilderOpen = false; render(); };
     tabBar.appendChild(pill);
@@ -2158,17 +2164,57 @@ function renderPoolsSection() {
   }
 
   const allPools = allPools0;
-  const joinablePools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
+  const receivedPools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
     p.visibility === 'public' || (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
   ));
-  const yourPools = allPools.filter(p => p.status !== 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
+  const sentPools = allPools.filter(p => p.creator === profile.name && p.status === 'open');
+  const activePools = allPools.filter(p => p.status !== 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
   const completedPools = allPools.filter(p => p.status === 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
 
   if (poolsActiveTab === 'requested') {
-    if (!dailyPoolDone) {
+    const toggle = el('div', 'league-scroller');
+    [['received','Received'],['sent','Sent']].forEach(([id,label]) => {
+      const pill = el('button', 'league-pill' + (poolInvitesView === id ? ' active' : ''), label);
+      pill.onclick = () => { poolInvitesView = id; poolSwipeStackInitialized = false; poolBrowseMode = 'swipe'; render(); };
+      toggle.appendChild(pill);
+    });
+
+    if (poolInvitesView === 'sent') {
+      wrap.appendChild(toggle);
+      if (!sentPools.length) { wrap.appendChild(el('div', 'empty', "You haven't sent any pool invites right now.")); }
+      else { sentPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
+      return wrap;
+    }
+
+    if (!poolSwipeStackInitialized) {
+      poolSwipeStack = receivedPools.slice().sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)).filter(p => !poolSwipeDeclinedIds.has(p.id) && !poolSwipeCart.some(c => c.id === p.id));
+      poolSwipeStackInitialized = true;
+    }
+    if (poolBrowseMode === 'cart') return renderPoolSwipeCart();
+
+    const dhpRow = !dailyPoolDone ? (() => {
+      const row = el('div', 'event-card');
+      row.style.cssText = 'cursor:pointer;display:flex;justify-content:space-between;align-items:center;';
+      row.innerHTML = `<div><div style="font-weight:800;font-size:13.5px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:11px;color:var(--text-faint);margin-top:2px;">5 random picks, resets every day \u2014 same for everyone</div></div><div style="font-size:16px;color:var(--text-faint);">${dailyHousePoolExpanded ? '\u25be' : '\u25b8'}</div>`;
+      row.onclick = () => { dailyHousePoolExpanded = !dailyHousePoolExpanded; render(); };
+      return row;
+    })() : null;
+    const rows = [toggle];
+    if (dhpRow) rows.push(dhpRow);
+    if (dhpRow && dailyHousePoolExpanded) {
+      const inner = el('div'); inner.style.cssText = 'margin-top:-4px;margin-bottom:4px;';
+      inner.appendChild(renderDailyChallenge());
+      rows.push(inner);
+    }
+    return renderPoolSwipeMode(rows);
+  } else if (poolsActiveTab === 'accepted') {
+    if (!activePools.length) { wrap.appendChild(el('div', 'empty', "You haven't built or joined any pools yet.")); }
+    else { activePools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
+  } else if (poolsActiveTab === 'settled') {
+    if (dailyPoolDone) {
       const dhpRow = el('div', 'event-card');
       dhpRow.style.cssText = 'cursor:pointer;display:flex;justify-content:space-between;align-items:center;';
-      dhpRow.innerHTML = `<div><div style="font-weight:800;font-size:13.5px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:11px;color:var(--text-faint);margin-top:2px;">5 random picks, resets every day \u2014 same for everyone</div></div><div style="font-size:16px;color:var(--text-faint);">${dailyHousePoolExpanded ? '\u25be' : '\u25b8'}</div>`;
+      dhpRow.innerHTML = `<div><div style="font-weight:800;font-size:13.5px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:11px;color:var(--text-faint);margin-top:2px;">All 10 house units placed for today</div></div><div style="font-size:16px;color:var(--text-faint);">${dailyHousePoolExpanded ? '\u25be' : '\u25b8'}</div>`;
       dhpRow.onclick = () => { dailyHousePoolExpanded = !dailyHousePoolExpanded; render(); };
       wrap.appendChild(dhpRow);
       if (dailyHousePoolExpanded) {
@@ -2177,37 +2223,8 @@ function renderPoolsSection() {
         wrap.appendChild(inner);
       }
     }
-    if (!joinablePools.length) { wrap.appendChild(el('div', 'empty', 'No pools to join right now.')); }
-    else { joinablePools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
-  } else if (poolsActiveTab === 'accepted') {
-    const yourHeader = el('div', 'week-header', `${poolsYourOpen ? '\u25be' : '\u25b8'} My Pools (${yourPools.length})`);
-    yourHeader.style.cursor = 'pointer';
-    yourHeader.onclick = () => { poolsYourOpen = !poolsYourOpen; render(); };
-    wrap.appendChild(yourHeader);
-    if (poolsYourOpen) {
-      if (!yourPools.length) { wrap.appendChild(el('div', 'empty', "You haven't built or joined any pools yet.")); }
-      else { yourPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
-    }
-    const completedHeader = el('div', 'week-header', `${poolsCompletedOpen ? '\u25be' : '\u25b8'} Completed Pools (${completedPools.length + (dailyPoolDone ? 1 : 0)})`);
-    completedHeader.style.cursor = 'pointer';
-    completedHeader.onclick = () => { poolsCompletedOpen = !poolsCompletedOpen; render(); };
-    wrap.appendChild(completedHeader);
-    if (poolsCompletedOpen) {
-      if (dailyPoolDone) {
-        const dhpRow = el('div', 'event-card');
-        dhpRow.style.cssText = 'cursor:pointer;display:flex;justify-content:space-between;align-items:center;';
-        dhpRow.innerHTML = `<div><div style="font-weight:800;font-size:13.5px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:11px;color:var(--text-faint);margin-top:2px;">All 10 house units placed for today</div></div><div style="font-size:16px;color:var(--text-faint);">${dailyHousePoolExpanded ? '\u25be' : '\u25b8'}</div>`;
-        dhpRow.onclick = () => { dailyHousePoolExpanded = !dailyHousePoolExpanded; render(); };
-        wrap.appendChild(dhpRow);
-        if (dailyHousePoolExpanded) {
-          const inner = el('div'); inner.style.cssText = 'margin-top:8px;';
-          inner.appendChild(renderDailyChallenge());
-          wrap.appendChild(inner);
-        }
-      }
-      if (!completedPools.length && !dailyPoolDone) { wrap.appendChild(el('div', 'empty', 'No completed pools yet.')); }
-      else { completedPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
-    }
+    if (!completedPools.length && !dailyPoolDone) { wrap.appendChild(el('div', 'empty', 'No completed pools yet.')); }
+    else { completedPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
   }
   return wrap;
 }
@@ -4022,6 +4039,139 @@ async function declineChallenge(ch) {
   catch (e) { allPicks[idx] = prev; allPicks.pop(); alert("Couldn't decline (" + describeFetchError(e) + ") — try again."); render(); }
 }
 
+function renderPoolSwipeCard(pool) {
+  const cardWrap = el('div');
+  cardWrap.style.cssText = 'position:relative;touch-action:pan-y;user-select:none;display:flex;flex-direction:column;';
+  const card = el('div', 'swipe-card-big');
+  card.style.cssText = 'padding:20px 24px;cursor:grab;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
+  const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 ' + (pool.targetFriend || 'Individual'));
+
+  const top = el('div');
+  top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:3px;">Pool \u00b7 from ${pool.creator}</div>`;
+  card.appendChild(top);
+
+  const nameId = 'poolswipe-name-' + pool.id.replace(/[^a-zA-Z0-9]/g, '');
+  const mid = el('div');
+  mid.style.cssText = 'text-align:center;margin:18px 0;';
+  mid.innerHTML = `<div id="${nameId}" style="font-size:20px;font-weight:900;color:#1a1a1a;white-space:nowrap;overflow:hidden;margin-bottom:8px;">${pool.name || pool.gameLabel}</div><div style="font-size:12px;color:#5a5342;font-weight:700;">${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 top ${pool.paidPositions} paid \u00b7 ${poolVisText}</div>`;
+  card.appendChild(mid);
+  setTimeout(() => { const el2 = document.getElementById(nameId); if (el2) shrinkTextToFit(el2, 14); }, 0);
+
+  const bottom = el('div');
+  bottom.style.cssText = 'text-align:center;';
+  bottom.innerHTML = `
+    <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">Games in this pool</div>
+    <div style="font-size:12.5px;color:#3a3528;font-weight:600;line-height:1.5;">${pool.legs.slice(0,4).map(l => l.gameLabel).join('<br>')}${pool.legs.length > 4 ? `<br>+${pool.legs.length - 4} more` : ''}</div>
+  `;
+  card.appendChild(bottom);
+
+  const stampAccept = el('div', null, 'ADD');
+  stampAccept.style.cssText = 'position:absolute;top:16px;left:16px;border:3px solid #2E7D32;color:#2E7D32;padding:3px 10px;font-weight:900;font-size:16px;border-radius:6px;transform:rotate(-15deg);opacity:0;pointer-events:none;';
+  const stampDecline = el('div', null, 'SKIP');
+  stampDecline.style.cssText = 'position:absolute;top:16px;right:16px;border:3px solid #C62828;color:#C62828;padding:3px 10px;font-weight:900;font-size:16px;border-radius:6px;transform:rotate(15deg);opacity:0;pointer-events:none;';
+  card.appendChild(stampAccept); card.appendChild(stampDecline);
+  cardWrap.appendChild(card);
+
+  function doDecline() { poolSwipeStack.shift(); poolSwipeDeclinedIds.add(pool.id); render(); }
+  function doAccept() { poolSwipeCart.push(pool); poolSwipeStack.shift(); render(); }
+  cardWrap._doAccept = doAccept;
+  cardWrap._doDecline = doDecline;
+
+  let startX = 0, currentX = 0, dragging = false;
+  card.addEventListener('pointerdown', (e) => { dragging = true; startX = e.clientX; card.style.transition = 'none'; card.setPointerCapture(e.pointerId); });
+  card.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    currentX = e.clientX - startX;
+    card.style.transform = `translateX(${currentX}px) rotate(${currentX / 20}deg)`;
+    if (currentX > 20) { stampAccept.style.opacity = Math.min(1, currentX / 100); stampDecline.style.opacity = 0; }
+    else if (currentX < -20) { stampDecline.style.opacity = Math.min(1, -currentX / 100); stampAccept.style.opacity = 0; }
+    else { stampAccept.style.opacity = 0; stampDecline.style.opacity = 0; }
+  });
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    card.style.transition = 'transform 0.25s ease';
+    if (currentX > 100) { card.style.transform = `translateX(600px) rotate(30deg)`; setTimeout(doAccept, 150); }
+    else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(doDecline, 150); }
+    else { card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0; }
+    currentX = 0;
+  }
+  card.addEventListener('pointerup', endDrag);
+  card.addEventListener('pointercancel', endDrag);
+  return cardWrap;
+}
+function renderPoolSwipeMode(extraRows) {
+  document.body.classList.add('no-scroll');
+  document.documentElement.classList.add('no-scroll');
+  const wrap = el('div');
+  const headerEl = document.querySelector('header.top');
+  const headerHeight = headerEl ? headerEl.offsetHeight : 0;
+  wrap.style.cssText = `position:fixed;top:${headerHeight}px;left:0;right:0;bottom:76px;display:flex;flex-direction:column;padding:4px 16px 10px;box-sizing:border-box;overflow:hidden;`;
+  (extraRows || []).forEach(row => { if (row) wrap.appendChild(row); });
+
+  const stackWrap = el('div');
+  stackWrap.style.cssText = 'flex:1;position:relative;margin-top:8px;min-height:0;';
+  if (!poolSwipeStack.length) {
+    const empty = el('div', 'empty', 'Nothing left to review right now.');
+    empty.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;text-align:center;';
+    stackWrap.appendChild(empty);
+  } else {
+    poolSwipeStack.slice(0, 3).reverse().forEach((pool, i) => {
+      const cardEl = renderPoolSwipeCard(pool);
+      cardEl.style.position = 'absolute';
+      cardEl.style.top = '0'; cardEl.style.left = '0'; cardEl.style.right = '0';
+      stackWrap.appendChild(cardEl);
+    });
+  }
+  wrap.appendChild(stackWrap);
+
+  const bottomBar = el('div'); bottomBar.id = 'swipeFixedBar';
+  bottomBar.style.cssText = `position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:15;`;
+  const countText = el('div', null, `${poolSwipeStack.length} left to review`); countText.style.cssText = 'font-size:12px;color:var(--text-dim);';
+  bottomBar.appendChild(countText);
+  const reviewBtn = el('button', null, `Review Cart (${poolSwipeCart.length})`);
+  reviewBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 16px;font-size:13px;font-weight:800;';
+  reviewBtn.onclick = () => { poolBrowseMode = 'cart'; render(); };
+  bottomBar.appendChild(reviewBtn);
+  document.body.appendChild(bottomBar);
+
+  if (poolSwipeStack.length) {
+    const actionRow = el('div');
+    actionRow.style.cssText = 'display:flex;gap:10px;margin-top:10px;';
+    const declineBtn = el('button', null, '\u2715 Skip');
+    declineBtn.style.cssText = 'flex:1;background:none;border:1px solid var(--danger);color:var(--danger);border-radius:10px;padding:12px;font-size:14px;font-weight:800;';
+    declineBtn.onclick = () => { const cardEl = stackWrap.lastElementChild; if (cardEl && cardEl._doDecline) cardEl._doDecline(); };
+    const acceptBtn = el('button', null, '\u2713 Add to Cart');
+    acceptBtn.style.cssText = 'flex:1;background:var(--accent-dark);border:1px solid var(--accent);color:var(--accent);border-radius:10px;padding:12px;font-size:14px;font-weight:800;';
+    acceptBtn.onclick = () => { const cardEl = stackWrap.lastElementChild; if (cardEl && cardEl._doAccept) cardEl._doAccept(); };
+    actionRow.appendChild(declineBtn); actionRow.appendChild(acceptBtn);
+    wrap.appendChild(actionRow);
+  }
+  return wrap;
+}
+function renderPoolSwipeCart() {
+  document.body.classList.remove('no-scroll');
+  document.documentElement.classList.remove('no-scroll');
+  const wrap = el('div');
+  const backBtn = el('button', null, '\u2190 Back to swiping');
+  backBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);font-size:12px;font-weight:700;padding:8px 12px;border-radius:6px;margin-bottom:10px;';
+  backBtn.onclick = () => { poolBrowseMode = 'swipe'; render(); };
+  wrap.appendChild(backBtn);
+  if (!poolSwipeCart.length) {
+    wrap.appendChild(el('div', 'empty', "Nothing in your cart yet \u2014 swipe right on a pool to add it here."));
+    return wrap;
+  }
+  wrap.appendChild(el('div', 'week-header', `Cart (${poolSwipeCart.length})`));
+  poolSwipeCart.forEach(pool => {
+    const cardEl = renderPoolCard(pool);
+    const rmBtn = el('button', null, '\u2715 Remove from cart');
+    rmBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
+    rmBtn.onclick = () => { poolSwipeCart = poolSwipeCart.filter(p => p.id !== pool.id); render(); };
+    cardEl.appendChild(rmBtn);
+    wrap.appendChild(cardEl);
+  });
+  return wrap;
+}
 function renderSwipeCard(ch) {
   const cardWrap = el('div');
   cardWrap.style.cssText = 'position:relative;touch-action:pan-y;user-select:none;display:flex;flex-direction:column;';
@@ -4408,12 +4558,14 @@ function renderExistingChallenges() {
 function renderRequestedSection() {
   const all = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
   const stillActive = ch => ch.status === 'open';
-  const friendsCount = all.filter(ch => (ch.visibility === 'friend' && ch.targetFriend === profile.name || isMyGroupChallenge(ch)) && ch.creator !== profile.name && stillActive(ch)).length;
-  const mineCount = all.filter(ch => ch.creator === profile.name && stillActive(ch)).length;
-  const viewCounts = { friends: friendsCount, mine: mineCount };
+  const receivedCount = all.filter(ch => stillActive(ch) && ch.creator !== profile.name && (
+    ch.visibility === 'public' || (ch.visibility === 'friend' && ch.targetFriend === profile.name) || isMyGroupChallenge(ch)
+  )).length;
+  const sentCount = all.filter(ch => ch.creator === profile.name && stillActive(ch)).length;
+  const viewCounts = { friends: receivedCount, mine: sentCount };
 
   const toggle = el('div', 'league-scroller');
-  [['friends','Friends'],['mine','Mine']].forEach(([id,label]) => {
+  [['friends','Received'],['mine','Sent']].forEach(([id,label]) => {
     const count = viewCounts[id];
     const pill = el('button', 'league-pill' + (existingChallengeView === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
     pill.style.position = 'relative';
@@ -4429,7 +4581,9 @@ function renderRequestedSection() {
   if (existingChallengeView === 'mine') {
     byView = all.filter(ch => ch.creator === profile.name && stillActive(ch));
   } else {
-    byView = all.filter(ch => (ch.visibility === 'friend' && ch.targetFriend === profile.name || isMyGroupChallenge(ch)) && ch.creator !== profile.name && stillActive(ch));
+    byView = all.filter(ch => stillActive(ch) && ch.creator !== profile.name && (
+      ch.visibility === 'public' || (ch.visibility === 'friend' && ch.targetFriend === profile.name) || isMyGroupChallenge(ch)
+    ));
   }
   const list = byView.slice().sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)); // received order — oldest first
 
@@ -4452,7 +4606,7 @@ function renderRequestedSection() {
   wrap.appendChild(toggle);
 
   const mineGlobal = list.filter(ch => ch.visibility === 'public');
-  const mineDirect = list.filter(ch => ch.visibility === 'friend');
+  const mineDirect = list.filter(ch => ch.visibility !== 'public');
 
   const mineGlobalHeader = el('div', 'week-header', `${mineGlobalOpen ? '\u25be' : '\u25b8'} Posted Globally (${mineGlobal.length})`);
   mineGlobalHeader.style.cursor = 'pointer';
@@ -4567,7 +4721,8 @@ function h2hTrackerId(nameA, nameB) {
   return 'h2h_' + [nameA, nameB].sort().join('_vs_');
 }
 
-function renderCompletedChallenges() {
+function renderCompletedChallenges(mode) {
+  mode = mode || 'both';
   const wrap = el('div');
   const mine = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && (p.creator === profile.name || p.acceptedBy === profile.name || p.targetFriend === profile.name));
 
@@ -4649,22 +4804,36 @@ function renderCompletedChallenges() {
   banner.appendChild(c4);
   wrap.appendChild(banner);
 
-  const activeHeader = el('div', 'week-header', `${activeChallengesOpen ? '\u25be' : '\u25b8'} Active (${active.length})`);
-  activeHeader.style.cursor = 'pointer';
-  activeHeader.onclick = () => { activeChallengesOpen = !activeChallengesOpen; render(); };
-  wrap.appendChild(activeHeader);
-  if (activeChallengesOpen) {
-    if (!active.length) { wrap.appendChild(el('div', 'empty', 'Nothing accepted and waiting on a result right now.')); }
-    else { active.forEach(ch => wrap.appendChild(renderChallengeRow(ch))); }
+  if (mode === 'active' || mode === 'both') {
+    if (mode === 'both') {
+      const activeHeader = el('div', 'week-header', `${activeChallengesOpen ? '\u25be' : '\u25b8'} Active (${active.length})`);
+      activeHeader.style.cursor = 'pointer';
+      activeHeader.onclick = () => { activeChallengesOpen = !activeChallengesOpen; render(); };
+      wrap.appendChild(activeHeader);
+      if (activeChallengesOpen) {
+        if (!active.length) { wrap.appendChild(el('div', 'empty', 'Nothing accepted and waiting on a result right now.')); }
+        else { active.forEach(ch => wrap.appendChild(renderChallengeRow(ch))); }
+      }
+    } else {
+      if (!active.length) { wrap.appendChild(el('div', 'empty', 'Nothing accepted and waiting on a result right now.')); }
+      else { active.forEach(ch => wrap.appendChild(renderChallengeRow(ch))); }
+    }
   }
 
-  const completedHeader = el('div', 'week-header', `${completedChallengesOpen ? '\u25be' : '\u25b8'} Completed (${completed.length})`);
-  completedHeader.style.cursor = 'pointer';
-  completedHeader.onclick = () => { completedChallengesOpen = !completedChallengesOpen; render(); };
-  wrap.appendChild(completedHeader);
-  if (completedChallengesOpen) {
-    if (!completed.length) { wrap.appendChild(el('div', 'empty', 'No completed challenges yet.')); }
-    else { completed.forEach(ch => wrap.appendChild(renderChallengeRow(ch))); }
+  if (mode === 'completed' || mode === 'both') {
+    if (mode === 'both') {
+      const completedHeader = el('div', 'week-header', `${completedChallengesOpen ? '\u25be' : '\u25b8'} Completed (${completed.length})`);
+      completedHeader.style.cursor = 'pointer';
+      completedHeader.onclick = () => { completedChallengesOpen = !completedChallengesOpen; render(); };
+      wrap.appendChild(completedHeader);
+      if (completedChallengesOpen) {
+        if (!completed.length) { wrap.appendChild(el('div', 'empty', 'No completed challenges yet.')); }
+        else { completed.forEach(ch => wrap.appendChild(renderChallengeRow(ch))); }
+      }
+    } else {
+      if (!completed.length) { wrap.appendChild(el('div', 'empty', 'No completed challenges yet.')); }
+      else { completed.forEach(ch => wrap.appendChild(renderChallengeRow(ch))); }
+    }
   }
   return wrap;
 }
@@ -6141,7 +6310,7 @@ function renderLeaderboard() {
   loadProfile();
   loadSession();
   appSection = 'pools';
-  activeTab = 'existing';
+  activeTab = 'requested';
   existingChallengeView = 'friends';
   challengeBrowseMode = 'swipe';
   openChallengeLeague = null;
