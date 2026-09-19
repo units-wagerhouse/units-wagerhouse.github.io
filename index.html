@@ -3311,6 +3311,7 @@ function poolLegSideOptions(leg) {
     return [g.away, g.home].map(ab => ({ side: ab, team: fullTeamName(g.id, ab), label: 'ML' }));
   }
   const spread = computeSpread(leg.sport, g);
+  if (spread === null) return null;
   const favSide = spread <= 0 ? g.home : g.away;
   const magnitude = Math.abs(spread);
   const favLabel = magnitude === 0 ? 'PK' : '-' + magnitude;
@@ -4206,12 +4207,15 @@ async function declineChallenge(ch) {
   catch (e) { allPicks[idx] = prev; allPicks.pop(); alert("Couldn't decline (" + describeFetchError(e) + ") — try again."); render(); }
 }
 
+let poolSwipeFlipped = {}; // pool.id -> bool (only reachable when content overflows)
 function renderPoolSwipeCard(pool) {
   const cardWrap = el('div');
   cardWrap.style.cssText = 'position:relative;touch-action:pan-y;user-select:none;display:flex;flex-direction:column;';
   const card = el('div', 'swipe-card-big');
   card.style.cssText = 'padding:14px 24px;cursor:grab;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
   const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 ' + (pool.targetFriend || 'Individual'));
+  const flipped = !!poolSwipeFlipped[pool.id];
+  let canFlip = flipped;
 
   let earliestStart = null;
   pool.legs.forEach(leg => {
@@ -4222,6 +4226,17 @@ function renderPoolSwipeCard(pool) {
     }
   });
   const lockText = earliestStart ? earliestStart.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'Soon';
+
+  function legValueText(leg, full) {
+    const opts = poolLegSideOptions(leg);
+    if (!opts) return 'Odds not posted yet';
+    if (leg.betType === 'total') return (opts[0].label && opts[0].label !== 'undefined') ? `Total ${opts[0].label}` : 'Total \u2014 odds not posted yet';
+    if (leg.betType === 'moneyline') return 'Moneyline';
+    if (leg.betType === 'playerprop') return `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} ${opts[0].label}`;
+    const fav = opts.find(o => o.label && o.label.startsWith('-'));
+    if (!fav) return 'Spread \u2014 odds not posted yet';
+    return full ? opts.map(o => `${o.team} ${o.label}`).join(' vs ') : `${fav.team} ${fav.label}`;
+  }
 
   const top = el('div');
   top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:3px;">Pool \u00b7 from ${pool.creator}</div>`;
@@ -4234,23 +4249,37 @@ function renderPoolSwipeCard(pool) {
   card.appendChild(mid);
   setTimeout(() => { const el2 = document.getElementById(nameId); if (el2) shrinkTextToFit(el2, 14); }, 0);
 
-  const list = el('div');
-  list.style.cssText = 'font-size:12px;color:#3a3528;font-weight:600;line-height:1.7;text-align:left;overflow-y:auto;flex:1;min-height:0;';
-  list.innerHTML = pool.legs.map(leg => {
-    const opts = poolLegSideOptions(leg);
-    let valueTxt = '';
-    if (opts) {
-      if (leg.betType === 'total') valueTxt = `Total ${opts[0].label}`;
-      else if (leg.betType === 'moneyline') valueTxt = 'Moneyline';
-      else if (leg.betType === 'playerprop') valueTxt = `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} ${opts[0].label}`;
-      else valueTxt = opts.map(o => `${o.team} ${o.label}`).join(' vs ');
-    }
-    const idx = gameIndex[leg.gameId];
-    const awayFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.away) : leg.gameLabel.split(' @ ')[0];
-    const homeFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.home) : leg.gameLabel.split(' @ ')[1];
-    return `<div style="margin-bottom:6px;"><b>${awayFull} @ ${homeFull}</b><br><span style="color:#5a5342;">${valueTxt}</span></div>`;
-  }).join('');
-  card.appendChild(list);
+  if (flipped) {
+    const list = el('div');
+    list.style.cssText = 'font-size:12.5px;color:#3a3528;font-weight:600;line-height:1.8;text-align:left;overflow-y:auto;flex:1;min-height:0;';
+    list.innerHTML = pool.legs.map(leg => {
+      const idx = gameIndex[leg.gameId];
+      const awayFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.away) : leg.gameLabel.split(' @ ')[0];
+      const homeFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.home) : leg.gameLabel.split(' @ ')[1];
+      return `<div style="margin-bottom:8px;"><b>${awayFull} @ ${homeFull}</b><br><span style="color:#5a5342;">${legValueText(leg, true)}</span></div>`;
+    }).join('');
+    card.appendChild(list);
+    const tapNote = el('div', null, 'Tap to go back');
+    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:8px;flex-shrink:0;';
+    card.appendChild(tapNote);
+  } else {
+    const list = el('div');
+    list.style.cssText = 'font-size:12px;color:#3a3528;font-weight:600;line-height:1.55;text-align:left;overflow:hidden;flex:1;min-height:0;';
+    list.innerHTML = pool.legs.map(leg => `<div style="margin-bottom:4px;">${leg.gameLabel} \u2014 ${legValueText(leg, false)}</div>`).join('');
+    card.appendChild(list);
+    const tapNote = el('div', null, 'Tap for game details');
+    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:8px;flex-shrink:0;display:none;';
+    card.appendChild(tapNote);
+
+    requestAnimationFrame(() => {
+      if (!list.isConnected) return;
+      if (list.scrollHeight > list.clientHeight + 2) {
+        list.style.display = 'none';
+        tapNote.style.display = 'block';
+        canFlip = true;
+      }
+    });
+  }
 
   const stampAccept = el('div', null, 'ADD');
   stampAccept.style.cssText = 'position:absolute;top:16px;left:16px;border:3px solid #2E7D32;color:#2E7D32;padding:3px 10px;font-weight:900;font-size:16px;border-radius:6px;transform:rotate(-15deg);opacity:0;pointer-events:none;';
@@ -4283,6 +4312,7 @@ function renderPoolSwipeCard(pool) {
     else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(doDecline, 150); }
     else {
       card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0;
+      if (!moved && canFlip) { poolSwipeFlipped[pool.id] = !poolSwipeFlipped[pool.id]; render(); }
     }
     currentX = 0;
   }
@@ -4296,7 +4326,9 @@ function renderDailyPoolSwipeCard() {
   const cardWrap = el('div');
   cardWrap.style.cssText = 'position:relative;touch-action:pan-y;user-select:none;display:flex;flex-direction:column;';
   const card = el('div', 'swipe-card-big');
-  card.style.cssText = 'padding:20px 24px;cursor:pointer;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
+  card.style.cssText = 'padding:14px 24px;cursor:grab;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
+  const flipped = !!poolSwipeFlipped['__daily_house_pool__'];
+  let canFlip = flipped;
 
   const leagues = [...new Set(slate.map(o => (LEAGUES_META.find(l => l.id === o.sport) || {}).label || o.sport))];
   let earliestStart = null;
@@ -4309,6 +4341,20 @@ function renderDailyPoolSwipeCard() {
   });
   const lockText = earliestStart ? earliestStart.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'Soon';
 
+  function slateValueText(o) {
+    const g = (DATA[o.sport] || []).find(x => x.id === o.gameId);
+    if (!g) return o.betType === 'total' ? 'Total \u2014 odds not posted yet' : 'Spread \u2014 odds not posted yet';
+    if (o.betType === 'total') {
+      if (g.overUnder !== null && g.overUnder !== undefined) return `Total ${g.overUnder}`;
+      return 'Total \u2014 odds not posted yet';
+    }
+    const spread = computeSpread(o.sport, g);
+    if (spread === null) return 'Spread \u2014 odds not posted yet';
+    const favSide = spread <= 0 ? g.home : g.away;
+    const magnitude = Math.abs(spread);
+    return `${favSide} ${magnitude === 0 ? 'PK' : '-' + magnitude}`;
+  }
+
   const top = el('div');
   top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:3px;">Pool \u00b7 from House</div>`;
   card.appendChild(top);
@@ -4316,28 +4362,38 @@ function renderDailyPoolSwipeCard() {
   mid.style.cssText = 'text-align:center;margin:14px 0;';
   mid.innerHTML = `<div style="font-size:20px;font-weight:900;color:#1a1a1a;margin-bottom:8px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:12px;color:#5a5342;font-weight:700;">${slate.length} games \u00b7 ${leagues.join(', ')}</div><div style="font-size:11px;color:#8a8168;font-weight:700;margin-top:4px;">Locks ${lockText}</div>`;
   card.appendChild(mid);
-  const list = el('div');
-  list.style.cssText = 'font-size:12px;color:#3a3528;font-weight:600;line-height:1.7;text-align:left;overflow-y:auto;flex:1;min-height:0;';
-  list.innerHTML = slate.map(o => {
-    const g = (DATA[o.sport] || []).find(x => x.id === o.gameId);
-    let valueTxt = o.betType === 'total' ? 'Total' : 'Spread';
-    if (g) {
-      if (o.betType === 'total' && g.overUnder !== null && g.overUnder !== undefined) valueTxt = `Total ${g.overUnder}`;
-      else if (o.betType === 'spread') {
-        const spread = computeSpread(o.sport, g);
-        if (spread !== null) {
-          const favSide = spread <= 0 ? g.home : g.away;
-          const magnitude = Math.abs(spread);
-          valueTxt = `${favSide} ${magnitude === 0 ? 'PK' : '-' + magnitude}`;
-        }
+
+  if (flipped) {
+    const list = el('div');
+    list.style.cssText = 'font-size:12.5px;color:#3a3528;font-weight:600;line-height:1.8;text-align:left;overflow-y:auto;flex:1;min-height:0;';
+    list.innerHTML = slate.map(o => {
+      const idx = gameIndex[o.gameId];
+      const awayFull = idx && idx.game ? fullTeamName(o.gameId, idx.game.away) : o.gameLabel.split(' @ ')[0];
+      const homeFull = idx && idx.game ? fullTeamName(o.gameId, idx.game.home) : o.gameLabel.split(' @ ')[1];
+      return `<div style="margin-bottom:8px;"><b>${awayFull} @ ${homeFull}</b><br><span style="color:#5a5342;">${slateValueText(o)}</span></div>`;
+    }).join('');
+    card.appendChild(list);
+    const tapNote = el('div', null, 'Tap to go back');
+    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:8px;flex-shrink:0;';
+    card.appendChild(tapNote);
+  } else {
+    const list = el('div');
+    list.style.cssText = 'font-size:12px;color:#3a3528;font-weight:600;line-height:1.55;text-align:left;overflow:hidden;flex:1;min-height:0;';
+    list.innerHTML = slate.map(o => `<div style="margin-bottom:4px;">${o.gameLabel} \u2014 ${slateValueText(o)}</div>`).join('');
+    card.appendChild(list);
+    const tapNote = el('div', null, 'Tap for game details');
+    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:8px;flex-shrink:0;display:none;';
+    card.appendChild(tapNote);
+
+    requestAnimationFrame(() => {
+      if (!list.isConnected) return;
+      if (list.scrollHeight > list.clientHeight + 2) {
+        list.style.display = 'none';
+        tapNote.style.display = 'block';
+        canFlip = true;
       }
-    }
-    const idx = gameIndex[o.gameId];
-    const awayFull = idx && idx.game ? fullTeamName(o.gameId, idx.game.away) : o.gameLabel.split(' @ ')[0];
-    const homeFull = idx && idx.game ? fullTeamName(o.gameId, idx.game.home) : o.gameLabel.split(' @ ')[1];
-    return `<div style="margin-bottom:6px;"><b>${awayFull} @ ${homeFull}</b><br><span style="color:#5a5342;">${valueTxt}</span></div>`;
-  }).join('');
-  card.appendChild(list);
+    });
+  }
 
   const stampAccept = el('div', null, 'ADD');
   stampAccept.style.cssText = 'position:absolute;top:16px;left:16px;border:3px solid #2E7D32;color:#2E7D32;padding:3px 10px;font-weight:900;font-size:16px;border-radius:6px;transform:rotate(-15deg);opacity:0;pointer-events:none;';
@@ -4370,6 +4426,7 @@ function renderDailyPoolSwipeCard() {
     else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(doDecline, 150); }
     else {
       card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0;
+      if (!moved && canFlip) { poolSwipeFlipped['__daily_house_pool__'] = !poolSwipeFlipped['__daily_house_pool__']; render(); }
     }
     currentX = 0;
   }
