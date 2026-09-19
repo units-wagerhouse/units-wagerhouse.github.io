@@ -22,7 +22,7 @@
   #app { min-height: 100vh; padding-bottom: 50px; }
   input, button { font-family: var(--font-head); }
 
-  header.top { position: sticky; top: 0; z-index: 20; background: var(--bg); padding: 16px 16px 0; border-bottom: 1px solid var(--border); }
+  header.top { position: sticky; top: 0; z-index: 20; background: var(--bg); padding: 16px 16px 0; }
   header.top .row1 { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
   header.top h1 { font-size: 19px; font-weight: 800; margin: 0; letter-spacing: -0.01em; text-transform: uppercase; color: var(--text); }
   header.top h1 span { background: linear-gradient(135deg, #FFC629, #EF3B3B); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -932,7 +932,7 @@ function renderSectionSwitch() {
 function renderTabs() {
   const bar = document.getElementById('tabbar');
   bar.innerHTML = '';
-  bar.className = 'tabbar league-scroller';
+  bar.className = 'league-scroller';
   if (!profile) return;
   const allCh = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
   const openCount = allCh.filter(ch => ch.status === 'open' && ch.visibility === 'public' && ch.creator !== profile.name).length;
@@ -2136,11 +2136,12 @@ function renderPoolsSection() {
   const tabBar = el('div', 'league-scroller');
   const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
   const friendNames0 = new Set((profile.friends || []).map(f => f.name));
-  const openCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && p.visibility === 'public').length;
+  const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
+  const openCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && p.visibility === 'public').length + (dailyPoolDone ? 0 : 1);
   const requestedCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && p.visibility !== 'public' && (
     (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
   )).length;
-  const acceptedCount = allPools0.filter(p => p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)).length;
+  const acceptedCount = allPools0.filter(p => p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)).length + (dailyPoolDone ? 1 : 0);
   [['open', `Open (${openCount})`],['create','Create'],['requested', requestedCount > 0 ? `Requested (${requestedCount})` : 'Requested'],['accepted', `Accepted (${acceptedCount})`]].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (poolsActiveTab === id ? ' active' : ''), label);
     pill.onclick = () => { poolsActiveTab = id; poolBuilderOpen = false; render(); };
@@ -2165,15 +2166,17 @@ function renderPoolsSection() {
   const completedPools = allPools.filter(p => p.status === 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
 
   if (poolsActiveTab === 'open') {
-    const dhpRow = el('div', 'event-card');
-    dhpRow.style.cssText = 'cursor:pointer;display:flex;justify-content:space-between;align-items:center;';
-    dhpRow.innerHTML = `<div><div style="font-weight:800;font-size:13.5px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:11px;color:var(--text-faint);margin-top:2px;">5 random picks, resets every day \u2014 same for everyone</div></div><div style="font-size:16px;color:var(--text-faint);">${dailyHousePoolExpanded ? '\u25be' : '\u25b8'}</div>`;
-    dhpRow.onclick = () => { dailyHousePoolExpanded = !dailyHousePoolExpanded; render(); };
-    wrap.appendChild(dhpRow);
-    if (dailyHousePoolExpanded) {
-      const inner = el('div'); inner.style.cssText = 'margin-top:8px;';
-      inner.appendChild(renderDailyChallenge());
-      wrap.appendChild(inner);
+    if (!dailyPoolDone) {
+      const dhpRow = el('div', 'event-card');
+      dhpRow.style.cssText = 'cursor:pointer;display:flex;justify-content:space-between;align-items:center;';
+      dhpRow.innerHTML = `<div><div style="font-weight:800;font-size:13.5px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:11px;color:var(--text-faint);margin-top:2px;">5 random picks, resets every day \u2014 same for everyone</div></div><div style="font-size:16px;color:var(--text-faint);">${dailyHousePoolExpanded ? '\u25be' : '\u25b8'}</div>`;
+      dhpRow.onclick = () => { dailyHousePoolExpanded = !dailyHousePoolExpanded; render(); };
+      wrap.appendChild(dhpRow);
+      if (dailyHousePoolExpanded) {
+        const inner = el('div'); inner.style.cssText = 'margin-top:8px;';
+        inner.appendChild(renderDailyChallenge());
+        wrap.appendChild(inner);
+      }
     }
     if (!openPools.length) { wrap.appendChild(el('div', 'empty', 'No public pools open right now.')); }
     else { openPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
@@ -2189,12 +2192,24 @@ function renderPoolsSection() {
       if (!yourPools.length) { wrap.appendChild(el('div', 'empty', "You haven't built or joined any pools yet.")); }
       else { yourPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
     }
-    const completedHeader = el('div', 'week-header', `${poolsCompletedOpen ? '\u25be' : '\u25b8'} Completed Pools (${completedPools.length})`);
+    const completedHeader = el('div', 'week-header', `${poolsCompletedOpen ? '\u25be' : '\u25b8'} Completed Pools (${completedPools.length + (dailyPoolDone ? 1 : 0)})`);
     completedHeader.style.cursor = 'pointer';
     completedHeader.onclick = () => { poolsCompletedOpen = !poolsCompletedOpen; render(); };
     wrap.appendChild(completedHeader);
     if (poolsCompletedOpen) {
-      if (!completedPools.length) { wrap.appendChild(el('div', 'empty', 'No completed pools yet.')); }
+      if (dailyPoolDone) {
+        const dhpRow = el('div', 'event-card');
+        dhpRow.style.cssText = 'cursor:pointer;display:flex;justify-content:space-between;align-items:center;';
+        dhpRow.innerHTML = `<div><div style="font-weight:800;font-size:13.5px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:11px;color:var(--text-faint);margin-top:2px;">All 10 house units placed for today</div></div><div style="font-size:16px;color:var(--text-faint);">${dailyHousePoolExpanded ? '\u25be' : '\u25b8'}</div>`;
+        dhpRow.onclick = () => { dailyHousePoolExpanded = !dailyHousePoolExpanded; render(); };
+        wrap.appendChild(dhpRow);
+        if (dailyHousePoolExpanded) {
+          const inner = el('div'); inner.style.cssText = 'margin-top:8px;';
+          inner.appendChild(renderDailyChallenge());
+          wrap.appendChild(inner);
+        }
+      }
+      if (!completedPools.length && !dailyPoolDone) { wrap.appendChild(el('div', 'empty', 'No completed pools yet.')); }
       else { completedPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
     }
   }
@@ -4249,7 +4264,7 @@ function isMyGroupChallenge(ch) {
   return !!(grp && (grp.members || []).some(m => m.uid === profile.uid));
 }
 function pendingFriendChallengesForMe() {
-  return allPicks.filter(p => p.poolType === 'challenge' && p.status === 'open' && p.creator !== profile.name && (
+  return allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.status === 'open' && p.creator !== profile.name && (
     (p.visibility === 'friend' && p.targetFriend === profile.name) ||
     isMyGroupChallenge(p)
   ));
