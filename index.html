@@ -43,6 +43,7 @@
   .swipe-bar-spacer { height: 76px; }
 
   .tabbar { display: flex; gap: 4px; }
+  #sectionSwitch { border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 4px; }
   .tab { flex: 1; text-align: center; padding: 10px 4px; font-size: 12px; font-weight: 700; color: var(--text-faint); border-bottom: 2px solid transparent; text-transform: uppercase; letter-spacing: 0.02em; }
   .tab.active { color: var(--accent); border-color: var(--accent); }
 
@@ -2129,7 +2130,7 @@ function renderHouseWeekHistory() {
   return wrap;
 }
 
-let poolsActiveTab = 'open'; // 'open' | 'create' | 'requested' | 'accepted'
+let poolsActiveTab = 'requested'; // 'create' | 'requested' | 'accepted'
 function renderPoolsSection() {
   const wrap = el('div');
 
@@ -2137,12 +2138,11 @@ function renderPoolsSection() {
   const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
   const friendNames0 = new Set((profile.friends || []).map(f => f.name));
   const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
-  const openCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && p.visibility === 'public').length + (dailyPoolDone ? 0 : 1);
-  const requestedCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && p.visibility !== 'public' && (
-    (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
-  )).length;
+  const joinablePoolsCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
+    p.visibility === 'public' || (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
+  )).length + (dailyPoolDone ? 0 : 1);
   const acceptedCount = allPools0.filter(p => p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)).length + (dailyPoolDone ? 1 : 0);
-  [['open', `Open (${openCount})`],['create','Create'],['requested', requestedCount > 0 ? `Requested (${requestedCount})` : 'Requested'],['accepted', `Accepted (${acceptedCount})`]].forEach(([id,label]) => {
+  [['create','Create'],['requested', joinablePoolsCount > 0 ? `Requested (${joinablePoolsCount})` : 'Requested'],['accepted', `Active (${acceptedCount})`]].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (poolsActiveTab === id ? ' active' : ''), label);
     pill.onclick = () => { poolsActiveTab = id; poolBuilderOpen = false; render(); };
     tabBar.appendChild(pill);
@@ -2158,14 +2158,13 @@ function renderPoolsSection() {
   }
 
   const allPools = allPools0;
-  const openPools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && p.visibility === 'public');
-  const requestedPools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && p.visibility !== 'public' && (
-    (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
+  const joinablePools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
+    p.visibility === 'public' || (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
   ));
   const yourPools = allPools.filter(p => p.status !== 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
   const completedPools = allPools.filter(p => p.status === 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
 
-  if (poolsActiveTab === 'open') {
+  if (poolsActiveTab === 'requested') {
     if (!dailyPoolDone) {
       const dhpRow = el('div', 'event-card');
       dhpRow.style.cssText = 'cursor:pointer;display:flex;justify-content:space-between;align-items:center;';
@@ -2178,11 +2177,8 @@ function renderPoolsSection() {
         wrap.appendChild(inner);
       }
     }
-    if (!openPools.length) { wrap.appendChild(el('div', 'empty', 'No public pools open right now.')); }
-    else { openPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
-  } else if (poolsActiveTab === 'requested') {
-    if (!requestedPools.length) { wrap.appendChild(el('div', 'empty', 'No pools sent to you right now.')); }
-    else { requestedPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
+    if (!joinablePools.length) { wrap.appendChild(el('div', 'empty', 'No pools to join right now.')); }
+    else { joinablePools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
   } else if (poolsActiveTab === 'accepted') {
     const yourHeader = el('div', 'week-header', `${poolsYourOpen ? '\u25be' : '\u25b8'} My Pools (${yourPools.length})`);
     yourHeader.style.cursor = 'pointer';
