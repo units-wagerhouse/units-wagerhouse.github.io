@@ -1599,11 +1599,6 @@ function renderFriendsScreen() {
       wrap.appendChild(row);
 
       if (friendProfileView === f.uid) {
-        const full = (allProfilesCache || []).find(p => p.uid === f.uid) || f;
-        const detail = el('div', 'locked-note');
-        detail.innerHTML = `<div class="ln-title">${full.name}</div>@${full.username}`;
-        wrap.appendChild(detail);
-
         const pairKey = h2hTrackerId(profile.name, f.name);
         const tracker = allPicks.find(p => p.poolType === 'h2hTracker' && p.id === pairKey);
         const quickStats = computeH2HStats(profile.name, f.name, tracker ? tracker.resetAt : null);
@@ -4384,7 +4379,6 @@ function renderDailyPoolSwipeCard() {
 }
 function renderPoolSwipeMode(extraRows, showDailyFirst) {
   const wrap = el('div');
-  wrap.style.cssText = 'padding-bottom:56px;';
   (extraRows || []).forEach(row => { if (row) wrap.appendChild(row); });
 
   const stackWrap = el('div');
@@ -4436,9 +4430,10 @@ function renderPoolSwipeMode(extraRows, showDailyFirst) {
 
   requestAnimationFrame(() => {
     if (!stackWrap.isConnected) return;
+    wrap.style.paddingBottom = bottomBar.offsetHeight + 'px';
     const top = stackWrap.getBoundingClientRect().top;
     const belowCard = wrap.getBoundingClientRect().bottom - stackWrap.getBoundingClientRect().bottom;
-    const available = window.innerHeight - top - belowCard - bottomBar.offsetHeight - 12;
+    const available = window.innerHeight - top - belowCard - 8;
     stackWrap.style.height = Math.max(260, available) + 'px';
   });
 
@@ -4580,7 +4575,6 @@ function shrinkTextToFit(elm, minSize) {
 }
 function renderSwipeMode(extraRows) {
   const wrap = el('div');
-  wrap.style.cssText = 'padding-bottom:56px;';
 
   (extraRows || []).forEach(row => { if (row) { row.style.flexShrink = '0'; wrap.appendChild(row); } });
 
@@ -4627,9 +4621,10 @@ function renderSwipeMode(extraRows) {
 
   requestAnimationFrame(() => {
     if (!stackWrap.isConnected) return;
+    wrap.style.paddingBottom = bottomBar.offsetHeight + 'px';
     const top = stackWrap.getBoundingClientRect().top;
     const belowCard = wrap.getBoundingClientRect().bottom - stackWrap.getBoundingClientRect().bottom;
-    const available = window.innerHeight - top - belowCard - bottomBar.offsetHeight - 12;
+    const available = window.innerHeight - top - belowCard - 8;
     stackWrap.style.height = Math.max(260, available) + 'px';
   });
 
