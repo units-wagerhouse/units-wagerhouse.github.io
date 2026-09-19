@@ -788,7 +788,12 @@ function startPolling() {
       const data = await fsGet();
       let changed = false;
       if (data.players && JSON.stringify(data.players) !== JSON.stringify(players)) { players = data.players; changed = true; }
-      if (data.picks && JSON.stringify(data.picks) !== JSON.stringify(allPicks)) { allPicks = data.picks; changed = true; }
+      if (data.picks && JSON.stringify(data.picks) !== JSON.stringify(allPicks)) {
+        allPicks = data.picks;
+        changed = true;
+        swipeStackInitialized = false;
+        poolSwipeStackInitialized = false;
+      }
       if (data.dailySlate && JSON.stringify(data.dailySlate) !== JSON.stringify(dailySlateData)) { dailySlateData = data.dailySlate; changed = true; }
       const friendSynced = await syncAcceptedFriendRequests();
       if ((changed || friendSynced) && profile) render();
@@ -1330,36 +1335,50 @@ function renderFriendsScreen() {
 
     if (groupLeaderboardOpen[grp.id]) {
       const lbCard = el('div'); lbCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin:-4px 0 8px;';
-      const modeRow = el('div'); modeRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
-      [['manual','On-Demand'],['daily','Daily'],['weekly','Weekly']].forEach(([id,label]) => {
-        const pill = el('button', 'league-pill' + ((grp.leaderboardResetMode || 'manual') === id ? ' active' : ''), label);
-        pill.onclick = async () => {
-          const idx = allPicks.findIndex(p => p.id === grp.id);
-          if (idx === -1) return;
-          const prevMode = allPicks[idx].leaderboardResetMode;
-          allPicks[idx].leaderboardResetMode = id;
-          try { await savePicks(allPicks); render(); }
-          catch (e) { allPicks[idx].leaderboardResetMode = prevMode; alert("Couldn't update (" + describeFetchError(e) + ") — try again."); }
-        };
-        modeRow.appendChild(pill);
-      });
-      lbCard.appendChild(modeRow);
 
       const stats = computeGroupLeaderboardStats(grp);
+      const matchWins = grp.matchWins || {};
       const ranked = Object.keys(stats).map(name => ({ name, ...stats[name] })).sort((a,b) => b.units - a.units);
+      lbCard.appendChild(el('div', null, 'Current standings')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:6px;';
       ranked.forEach((s, i) => {
         const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;';
-        r.innerHTML = `<span>${i + 1}. ${s.name}${s.name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${s.wins}-${s.losses}</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
+        r.innerHTML = `<span>${i + 1}. ${s.name}${s.name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${matchWins[s.name] || 0} match wins</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
         lbCard.appendChild(r);
       });
+      checkGroupThreshold(grp, stats).then(changed => { if (changed) render(); });
 
-      const resetBtn = el('button', null, 'Reset Leaderboard Now');
-      resetBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
-      resetBtn.onclick = async () => {
-        if (!confirm('Reset this leaderboard? Past results stay on record, but everyone starts fresh from right now.')) return;
+      lbCard.appendChild(el('div', null, 'Match Winning-Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
+      const gThreshRow = el('div'); gThreshRow.style.cssText = 'display:flex;gap:6px;';
+      const gThreshInput = el('input'); gThreshInput.type = 'number'; gThreshInput.min = '1'; gThreshInput.step = '1'; gThreshInput.placeholder = 'No threshold';
+      gThreshInput.value = grp.winThreshold || '';
+      gThreshInput.style.cssText = 'flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box;';
+      const gThreshSaveBtn = el('button', null, 'Save');
+      gThreshSaveBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;';
+      gThreshSaveBtn.onclick = async () => {
+        const v = gThreshInput.value === '' ? null : Math.ceil(parseFloat(gThreshInput.value));
         const idx = allPicks.findIndex(p => p.id === grp.id);
         if (idx === -1) return;
-        const prev = { leaderboardResetMode: allPicks[idx].leaderboardResetMode, leaderboardPeriodStart: allPicks[idx].leaderboardPeriodStart };
+        const prevThresh = allPicks[idx].winThreshold;
+        allPicks[idx].winThreshold = v;
+        try { await savePicks(allPicks); render(); }
+        catch (e) { allPicks[idx].winThreshold = prevThresh; alert("Couldn't save (" + describeFetchError(e) + ") — try again."); }
+      };
+      gThreshRow.appendChild(gThreshInput); gThreshRow.appendChild(gThreshSaveBtn);
+      lbCard.appendChild(gThreshRow);
+      lbCard.appendChild(el('div', 'setup-hint', 'When anyone reaches this many units, they automatically win the match and the leaderboard resets to 0.'));
+
+      const resetBtn = el('button', null, 'Reset Leaderboard Now');
+      resetBtn.style.cssText = 'width:100%;margin-top:10px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
+      resetBtn.onclick = async () => {
+        if (!confirm('Reset this leaderboard? Whoever\'s in the lead right now gets credit for winning this match, then everyone starts fresh.')) return;
+        const idx = allPicks.findIndex(p => p.id === grp.id);
+        if (idx === -1) return;
+        const prev = { leaderboardResetMode: allPicks[idx].leaderboardResetMode, leaderboardPeriodStart: allPicks[idx].leaderboardPeriodStart, matchWins: allPicks[idx].matchWins };
+        const currentLeader = ranked.length && ranked[0].units > 0 ? ranked[0].name : null;
+        if (currentLeader) {
+          const prevMatchWins = { ...(allPicks[idx].matchWins || {}) };
+          allPicks[idx].matchWins = { ...prevMatchWins, [currentLeader]: (prevMatchWins[currentLeader] || 0) + 1 };
+        }
         allPicks[idx].leaderboardResetMode = 'manual';
         allPicks[idx].leaderboardPeriodStart = new Date().toISOString();
         try { await savePicks(allPicks); render(); }
@@ -1368,6 +1387,7 @@ function renderFriendsScreen() {
       lbCard.appendChild(resetBtn);
       wrap.appendChild(lbCard);
     }
+    wrap.appendChild(renderGroupCommentsSection(grp));
   });
 
   const groupToggleBtn = el('button', null, groupBuilderOpen ? '\u2212 Cancel' : '+ Create Group');
@@ -1449,29 +1469,60 @@ function renderFriendsScreen() {
       left.appendChild(el('div', 'who', f.name));
       const tracker = allPicks.find(p => p.poolType === 'h2hTracker' && p.id === pairKey);
       const quickStats = computeH2HStats(profile.name, f.name, tracker ? tracker.resetAt : null);
-      left.appendChild(el('div', 'detail', `${quickStats[profile.name].wins}-${quickStats[f.name].wins}`));
+      const matchWins = (tracker && tracker.matchWins) || {};
+      left.appendChild(el('div', 'detail', `${Math.round(quickStats[profile.name].units)}u \u2013 ${Math.round(quickStats[f.name].units)}u (${matchWins[profile.name] || 0}-${matchWins[f.name] || 0})`));
       row.appendChild(left);
       row.onclick = () => { h2hSectionOpen[pairKey] = !h2hSectionOpen[pairKey]; render(); };
       wrap.appendChild(row);
+      checkH2HThreshold(tracker, profile.name, f.name, quickStats).then(changed => { if (changed) render(); });
 
       if (h2hSectionOpen[pairKey]) {
         const h2hCard = el('div'); h2hCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin:-4px 0 8px;';
+        h2hCard.appendChild(el('div', null, 'Current matchup')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:6px;';
         [profile.name, f.name].forEach(name => {
           const s = quickStats[name];
           const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;';
-          r.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${s.wins} won</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
+          r.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${matchWins[name] || 0} match wins</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
           h2hCard.appendChild(r);
         });
-        const resetBtn = el('button', null, 'Reset Matchup Now');
-        resetBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
-        resetBtn.onclick = async () => {
-          if (!confirm(`Reset your matchup with ${f.name}? Past results stay on record, but the head-to-head tally starts fresh from right now.`)) return;
+
+        h2hCard.appendChild(el('div', null, 'Match Winning-Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
+        const threshRow = el('div'); threshRow.style.cssText = 'display:flex;gap:6px;';
+        const threshInput = el('input'); threshInput.type = 'number'; threshInput.min = '1'; threshInput.step = '1'; threshInput.placeholder = 'No threshold';
+        threshInput.value = (tracker && tracker.winThreshold) ? tracker.winThreshold : '';
+        threshInput.style.cssText = 'flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box;';
+        const threshSaveBtn = el('button', null, 'Save');
+        threshSaveBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;';
+        threshSaveBtn.onclick = async () => {
+          const v = threshInput.value === '' ? null : Math.ceil(parseFloat(threshInput.value));
           const idx = allPicks.findIndex(p => p.id === pairKey);
           const nowIso = new Date().toISOString();
           if (idx === -1) {
-            const rec = { id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, timestamp: nowIso };
+            allPicks.push({ id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, matchWins: {}, winThreshold: v, timestamp: nowIso });
+          } else {
+            allPicks[idx].winThreshold = v;
+          }
+          try { await savePicks(allPicks); render(); }
+          catch (e) { alert("Couldn't save (" + describeFetchError(e) + ") — try again."); }
+        };
+        threshRow.appendChild(threshInput); threshRow.appendChild(threshSaveBtn);
+        h2hCard.appendChild(threshRow);
+        h2hCard.appendChild(el('div', 'setup-hint', 'When either of you reaches this many units, they automatically win the match and the score resets to 0.'));
+
+        const resetBtn = el('button', null, 'Reset Matchup Now');
+        resetBtn.style.cssText = 'width:100%;margin-top:10px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
+        resetBtn.onclick = async () => {
+          if (!confirm(`Reset your matchup with ${f.name}? Whoever's ahead right now gets credit for winning this match, then the score starts fresh.`)) return;
+          const idx = allPicks.findIndex(p => p.id === pairKey);
+          const nowIso = new Date().toISOString();
+          const leaderName = quickStats[profile.name].units > quickStats[f.name].units ? profile.name : (quickStats[f.name].units > quickStats[profile.name].units ? f.name : null);
+          if (idx === -1) {
+            const newMatchWins = leaderName ? { [leaderName]: 1 } : {};
+            const rec = { id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, matchWins: newMatchWins, winThreshold: null, timestamp: nowIso };
             allPicks.push(rec);
           } else {
+            const prevMatchWins = { ...(allPicks[idx].matchWins || {}) };
+            if (leaderName) allPicks[idx].matchWins = { ...prevMatchWins, [leaderName]: (prevMatchWins[leaderName] || 0) + 1 };
             allPicks[idx].resetAt = nowIso;
           }
           try { await savePicks(allPicks); render(); }
@@ -2180,7 +2231,7 @@ function renderPoolsSection() {
   const receivedPools = allPools.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
     p.visibility === 'public' || (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
   ));
-  const sentPools = allPools.filter(p => p.creator === profile.name && p.status === 'open');
+  const sentPools = allPools.filter(p => p.creator === profile.name && p.status === 'open' && !(p.participants || []).some(pt => pt.name !== profile.name));
   const activePools = allPools.filter(p => p.status !== 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
   const completedPools = allPools.filter(p => p.status === 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
 
@@ -4912,10 +4963,54 @@ function computeH2HStats(nameA, nameB, resetAt) {
     stats[ch.creator].units += profitCreator;
     stats[ch.acceptedBy].units += profitAcceptor;
   });
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool' && p.status === 'settled' && new Date(p.timestamp) >= periodStart &&
+    (p.participants || []).some(pt => pt.name === nameA) && (p.participants || []).some(pt => pt.name === nameB)
+  ).forEach(pool => {
+    const scoreA = poolParticipantScore(pool, pool.participants.find(pt => pt.name === nameA)).total;
+    const scoreB = poolParticipantScore(pool, pool.participants.find(pt => pt.name === nameB)).total;
+    stats[nameA].units += scoreA;
+    stats[nameB].units += scoreB;
+    if (scoreA > scoreB) stats[nameA].wins++;
+    else if (scoreB > scoreA) stats[nameB].wins++;
+  });
   return stats;
 }
 function h2hTrackerId(nameA, nameB) {
   return 'h2h_' + [nameA, nameB].sort().join('_vs_');
+}
+async function checkGroupThreshold(grp, stats) {
+  if (!grp.winThreshold) return false;
+  const ranked = Object.keys(stats).map(name => ({ name, units: stats[name].units })).sort((a,b) => b.units - a.units);
+  if (!ranked.length) return false;
+  const leader = ranked[0];
+  if (leader.units < grp.winThreshold) return false;
+  const idx = allPicks.findIndex(p => p.id === grp.id);
+  if (idx === -1) return false;
+  const nowIso = new Date().toISOString();
+  const prevMatchWins = { ...(grp.matchWins || {}) };
+  const newMatchWins = { ...prevMatchWins, [leader.name]: (prevMatchWins[leader.name] || 0) + 1 };
+  allPicks[idx].matchWins = newMatchWins;
+  allPicks[idx].leaderboardResetMode = 'manual';
+  allPicks[idx].leaderboardPeriodStart = nowIso;
+  try { await savePicks(allPicks); return true; }
+  catch (e) { allPicks[idx].matchWins = prevMatchWins; return false; }
+}
+
+async function checkH2HThreshold(tracker, nameA, nameB, stats) {
+  if (!tracker || !tracker.winThreshold) return false;
+  const leaderName = stats[nameA].units > stats[nameB].units ? nameA : (stats[nameB].units > stats[nameA].units ? nameB : null);
+  if (!leaderName) return false;
+  const leaderUnits = Math.max(stats[nameA].units, stats[nameB].units);
+  if (leaderUnits < tracker.winThreshold) return false;
+  const idx = allPicks.findIndex(p => p.id === tracker.id);
+  if (idx === -1) return false;
+  const nowIso = new Date().toISOString();
+  const prevMatchWins = { ...(tracker.matchWins || {}) };
+  const newMatchWins = { ...prevMatchWins, [leaderName]: (prevMatchWins[leaderName] || 0) + 1 };
+  allPicks[idx].matchWins = newMatchWins;
+  allPicks[idx].resetAt = nowIso;
+  try { await savePicks(allPicks); return true; }
+  catch (e) { allPicks[idx].matchWins = prevMatchWins; allPicks[idx].resetAt = tracker.resetAt; return false; }
 }
 
 function renderCompletedChallenges(mode) {
@@ -5039,6 +5134,59 @@ function renderCompletedChallenges(mode) {
   return wrap;
 }
 
+function renderGroupCommentsSection(grp) {
+  const isMember = (grp.members || []).some(m => m.uid === profile.uid);
+  if (!isMember) return el('div');
+
+  const wrap = el('div');
+  wrap.style.cssText = 'margin-top:10px;border-top:1px solid var(--border);padding-top:8px;';
+  const isOpen = !!commentSectionOpen[grp.id];
+  const header = el('div', null, `${isOpen ? '\u25be' : '\u25b8'} Group Chat`);
+  header.style.cssText = 'font-size:11px;font-weight:700;color:var(--text-dim);cursor:pointer;';
+  header.onclick = () => { commentSectionOpen[grp.id] = !isOpen; render(); };
+  wrap.appendChild(header);
+  if (!isOpen) return wrap;
+
+  const shown = allPicks.filter(p => p.poolType === 'comment' && p.poolId === grp.id)
+    .slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+  if (!shown.length) { wrap.appendChild(el('div', 'empty', 'No messages yet.')); }
+  else {
+    shown.forEach(c => {
+      const row = el('div');
+      row.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--border);';
+      const dateStr = new Date(c.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      row.innerHTML = `<div style="font-size:11px;font-weight:700;color:var(--text);">${c.author} <span style="font-weight:500;color:var(--text-faint);">\u00b7 ${dateStr}</span></div><div style="font-size:12px;color:var(--text-dim);margin-top:2px;">${c.text}</div>`;
+      wrap.appendChild(row);
+    });
+  }
+
+  const postRow = el('div'); postRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
+  const input = el('input'); input.placeholder = 'Message the group…';
+  input.style.cssText = 'flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 8px;font-size:12px;box-sizing:border-box;';
+  postRow.appendChild(input);
+  const postBtn = el('button', null, 'Post');
+  postBtn.style.cssText = 'background:var(--accent-dark);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:7px 12px;font-size:12px;font-weight:700;flex-shrink:0;';
+  postRow.appendChild(postBtn);
+  wrap.appendChild(postRow);
+
+  postBtn.onclick = async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    postBtn.disabled = true; postBtn.textContent = 'Posting…';
+    const comment = { id: profile.name + '_comment_' + grp.id + '_' + Date.now(), poolType: 'comment', poolId: grp.id, author: profile.name, text, timestamp: new Date().toISOString() };
+    allPicks.push(comment);
+    try {
+      await savePicks(allPicks);
+      input.value = '';
+      render();
+    } catch (e) {
+      allPicks.pop();
+      postBtn.disabled = false; postBtn.textContent = 'Post';
+      alert("Couldn't post (" + describeFetchError(e) + ") — try again.");
+    }
+  };
+  return wrap;
+}
 function renderPoolCommentsSection(pool) {
   const isMember = pool.creator === profile.name || (pool.participants || []).some(p => p.name === profile.name);
   if (!isMember) return el('div');
