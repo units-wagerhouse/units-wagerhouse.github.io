@@ -1206,6 +1206,7 @@ let groupBuilderOpen = false;
 let groupBuilderName = '';
 let groupBuilderMemberUids = new Set();
 let groupLeaderboardOpen = {}; // groupId -> bool
+let groupInviteOpen = {}; // groupId -> bool
 let h2hSectionOpen = {}; // pairKey -> bool
 let autoMatchNotice = null; // { creator, isFriend } | null
 let friendsAllProfilesLoaded = false;
@@ -1332,6 +1333,49 @@ function renderFriendsScreen() {
       row.appendChild(delBtn);
     }
     wrap.appendChild(row);
+
+    if (groupLeaderboardOpen[grp.id]) {
+      const memberUids = new Set(grp.members.map(m => m.uid));
+      const invitableFriends = myFriends.filter(f => !memberUids.has(f.uid));
+
+      const inviteToggleBtn = el('button', null, groupInviteOpen[grp.id] ? '\u2212 Cancel' : '+ Invite Friend');
+      inviteToggleBtn.style.cssText = 'width:100%;margin-bottom:8px;background:none;border:1px dashed var(--accent);color:var(--accent);border-radius:8px;padding:8px;font-size:12px;font-weight:700;';
+      inviteToggleBtn.onclick = () => { groupInviteOpen[grp.id] = !groupInviteOpen[grp.id]; render(); };
+      wrap.appendChild(inviteToggleBtn);
+
+      if (groupInviteOpen[grp.id]) {
+        if (!invitableFriends.length) {
+          wrap.appendChild(el('div', 'empty', 'All your friends are already in this group.'));
+        } else {
+          const inviteRow = el('div'); inviteRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+          const friendSel = el('select');
+          friendSel.style.cssText = 'flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;box-sizing:border-box;';
+          invitableFriends.forEach(f => { const o = document.createElement('option'); o.value = f.uid; o.textContent = f.name; friendSel.appendChild(o); });
+          const addBtn = el('button', null, 'Add');
+          addBtn.style.cssText = 'background:var(--accent-dark);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:8px 14px;font-size:12.5px;font-weight:700;flex-shrink:0;';
+          addBtn.onclick = async () => {
+            const chosen = invitableFriends.find(f => f.uid === friendSel.value);
+            if (!chosen) return;
+            const idx = allPicks.findIndex(p => p.id === grp.id);
+            if (idx === -1) return;
+            const prevMembers = allPicks[idx].members.slice();
+            allPicks[idx].members = [...prevMembers, { uid: chosen.uid, name: chosen.name, username: chosen.username }];
+            addBtn.disabled = true; addBtn.textContent = 'Adding…';
+            try {
+              await savePicks(allPicks);
+              groupInviteOpen[grp.id] = false;
+              render();
+            } catch (e) {
+              allPicks[idx].members = prevMembers;
+              addBtn.disabled = false; addBtn.textContent = 'Add';
+              alert("Couldn't add (" + describeFetchError(e) + ") — try again.");
+            }
+          };
+          inviteRow.appendChild(friendSel); inviteRow.appendChild(addBtn);
+          wrap.appendChild(inviteRow);
+        }
+      }
+    }
 
     if (groupLeaderboardOpen[grp.id]) {
       const lbCard = el('div'); lbCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin:-4px 0 8px;';
