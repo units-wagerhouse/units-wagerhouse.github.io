@@ -146,6 +146,7 @@
   .stats-table td.pos { color: var(--accent); }
   .stats-table td.neg { color: var(--danger); }
   .refresh-note { margin: 16px 0 0; padding: 11px 13px; background: var(--surface); border-radius: 8px; font-size: 11px; color: var(--text-faint); line-height: 1.5; border-left: 2px solid var(--accent-dark); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  @keyframes ptr-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -4583,10 +4584,38 @@ function shrinkTextToFit(elm, minSize) {
 }
 function attachPullToRefresh(wrapperEl) {
   let startY = 0, pulling = false, currentPull = 0, refreshing = false;
-  const indicator = el('div', null, '\u2193 Pull to refresh');
-  indicator.style.cssText = 'position:absolute;top:-26px;left:0;right:0;text-align:center;font-size:11px;color:var(--text-faint);font-weight:700;opacity:0;pointer-events:none;';
+  const THRESHOLD = 70;
+
+  const spinnerWrap = el('div');
+  spinnerWrap.style.cssText = 'position:absolute;top:-40px;left:0;right:0;display:flex;justify-content:center;align-items:center;height:32px;opacity:0;pointer-events:none;';
+  const spinner = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  spinner.setAttribute('width', '22'); spinner.setAttribute('height', '22'); spinner.setAttribute('viewBox', '0 0 22 22');
+  spinner.style.cssText = 'transform:rotate(0deg);';
+  spinner.innerHTML = `<circle cx="11" cy="11" r="9" fill="none" stroke="var(--text-faint)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="42" stroke-dashoffset="10"></circle>`;
+  spinnerWrap.appendChild(spinner);
+
+  const content = el('div');
+  content.style.cssText = 'display:contents;';
   wrapperEl.style.position = 'relative';
-  wrapperEl.insertBefore(indicator, wrapperEl.firstChild);
+  wrapperEl.insertBefore(spinnerWrap, wrapperEl.firstChild);
+
+  // Everything except the spinner wrap gets translated together as "the content" during a pull.
+  const contentEls = () => Array.from(wrapperEl.children).filter(c => c !== spinnerWrap);
+
+  function setPullVisual(dist) {
+    const clamped = Math.max(0, Math.min(dist, THRESHOLD * 1.6));
+    spinnerWrap.style.opacity = String(Math.min(1, clamped / THRESHOLD));
+    spinnerWrap.style.transform = `translateY(${clamped}px)`;
+    spinner.style.transform = `rotate(${clamped * 3}deg)`;
+    contentEls().forEach(c => { c.style.transform = `translateY(${clamped}px)`; c.style.transition = 'none'; });
+  }
+  function resetPullVisual(animate) {
+    contentEls().forEach(c => { c.style.transition = animate ? 'transform 0.2s ease' : 'none'; c.style.transform = 'translateY(0)'; });
+    spinnerWrap.style.transition = animate ? 'opacity 0.2s ease, transform 0.2s ease' : 'none';
+    spinnerWrap.style.opacity = '0';
+    spinnerWrap.style.transform = 'translateY(0)';
+  }
+
   wrapperEl.addEventListener('touchstart', (e) => {
     if (refreshing) return;
     startY = e.touches[0].clientY;
@@ -4596,20 +4625,17 @@ function attachPullToRefresh(wrapperEl) {
   wrapperEl.addEventListener('touchmove', (e) => {
     if (!pulling || refreshing) return;
     currentPull = e.touches[0].clientY - startY;
-    if (currentPull > 8) {
-      indicator.style.opacity = String(Math.min(1, currentPull / 80));
-      indicator.textContent = currentPull > 80 ? '\u2191 Release to refresh' : '\u2193 Pull to refresh';
-    } else {
-      indicator.style.opacity = '0';
-    }
+    if (currentPull > 0) setPullVisual(currentPull);
   }, { passive: true });
   wrapperEl.addEventListener('touchend', async () => {
     if (!pulling || refreshing) { pulling = false; return; }
     pulling = false;
-    if (currentPull > 80) {
+    if (currentPull > THRESHOLD) {
       refreshing = true;
-      indicator.style.opacity = '1';
-      indicator.textContent = 'Refreshing\u2026';
+      spinnerWrap.style.opacity = '1';
+      spinnerWrap.style.transform = `translateY(${THRESHOLD}px)`;
+      contentEls().forEach(c => { c.style.transition = 'transform 0.15s ease'; c.style.transform = `translateY(${THRESHOLD}px)`; });
+      spinner.style.animation = 'ptr-spin 0.7s linear infinite';
       try {
         const data = await fsGet();
         if (data.players) players = data.players;
@@ -4620,7 +4646,7 @@ function attachPullToRefresh(wrapperEl) {
       } catch (e) { /* ignore transient refresh errors */ }
       render();
     } else {
-      indicator.style.opacity = '0';
+      resetPullVisual(true);
     }
     currentPull = 0;
   });
