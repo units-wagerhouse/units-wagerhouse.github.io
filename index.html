@@ -393,6 +393,8 @@ let poolSwipeStackInitialized = false;
 let poolSwipeDeclinedIds = new Set();
 let poolBrowseMode = 'swipe'; // 'swipe' | 'cart'
 let poolInvitesView = 'received'; // 'received' | 'sent'
+let dailyPoolFlipped = false;
+let dailyPoolSwipedAway = false; // session-only skip, since the daily pool isn't a record you can permanently decline
 let poolJoinedListOpen = {}; // poolId -> bool
 let poolLegsListOpen = {}; // poolId -> bool
 let poolJoinSides = {}; // gameId+betType -> sideAbbr
@@ -2200,21 +2202,9 @@ function renderPoolsSection() {
     }
     if (poolBrowseMode === 'cart') return renderPoolSwipeCart();
 
-    const dhpRow = !dailyPoolDone ? (() => {
-      const row = el('div', 'event-card');
-      row.style.cssText = 'cursor:pointer;display:flex;justify-content:space-between;align-items:center;';
-      row.innerHTML = `<div><div style="font-weight:800;font-size:13.5px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:11px;color:var(--text-faint);margin-top:2px;">5 random picks, resets every day \u2014 same for everyone</div></div><div style="font-size:16px;color:var(--text-faint);">${dailyHousePoolExpanded ? '\u25be' : '\u25b8'}</div>`;
-      row.onclick = () => { dailyHousePoolExpanded = !dailyHousePoolExpanded; render(); };
-      return row;
-    })() : null;
     const rows = [toggle];
-    if (dhpRow) rows.push(dhpRow);
-    if (dhpRow && dailyHousePoolExpanded) {
-      const inner = el('div'); inner.style.cssText = 'margin-top:-4px;margin-bottom:4px;';
-      inner.appendChild(renderDailyChallenge());
-      rows.push(inner);
-    }
-    return renderPoolSwipeMode(rows);
+    const showDaily = !dailyPoolDone && !dailyPoolSwipedAway;
+    return renderPoolSwipeMode(rows, showDaily);
   } else if (poolsActiveTab === 'accepted') {
     if (!activePools.length) { wrap.appendChild(el('div', 'empty', "You haven't built or joined any pools yet.")); }
     else { activePools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
@@ -4108,7 +4098,88 @@ function renderPoolSwipeCard(pool) {
   card.addEventListener('pointercancel', endDrag);
   return cardWrap;
 }
-function renderPoolSwipeMode(extraRows) {
+function renderDailyPoolSwipeCard() {
+  const slate = dailyBaseSlate() || [];
+  const cardWrap = el('div');
+  cardWrap.style.cssText = 'position:relative;touch-action:pan-y;user-select:none;display:flex;flex-direction:column;';
+  const card = el('div', 'swipe-card-big');
+  card.style.cssText = 'padding:20px 24px;cursor:pointer;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
+
+  const leagues = [...new Set(slate.map(o => (LEAGUES_META.find(l => l.id === o.sport) || {}).label || o.sport))];
+  let earliestStart = null;
+  slate.forEach(o => {
+    const idx = gameIndex[o.gameId];
+    if (idx && idx.game && idx.game.start) {
+      const d = new Date(idx.game.start);
+      if (!earliestStart || d < earliestStart) earliestStart = d;
+    }
+  });
+  const lockText = earliestStart ? earliestStart.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'Soon';
+
+  if (!dailyPoolFlipped) {
+    const top = el('div');
+    top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:3px;">Pool \u00b7 from House</div>`;
+    card.appendChild(top);
+    const mid = el('div');
+    mid.style.cssText = 'text-align:center;margin:22px 0;';
+    mid.innerHTML = `<div style="font-size:20px;font-weight:900;color:#1a1a1a;margin-bottom:10px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:12.5px;color:#5a5342;font-weight:700;line-height:1.6;">${slate.length} games \u00b7 ${leagues.join(', ')}<br>Locks ${lockText}</div>`;
+    card.appendChild(mid);
+    const tapNote = el('div', null, 'Tap for game details');
+    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;';
+    card.appendChild(tapNote);
+  } else {
+    const top = el('div');
+    top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:6px;">Today's Games</div>`;
+    card.appendChild(top);
+    const list = el('div');
+    list.style.cssText = 'font-size:12.5px;color:#3a3528;font-weight:600;line-height:1.7;text-align:left;';
+    list.innerHTML = slate.map(o => `${o.gameLabel} \u2014 ${o.betType === 'total' ? 'Total' : 'Spread'}`).join('<br>');
+    card.appendChild(list);
+    const tapNote = el('div', null, 'Tap to flip back');
+    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:12px;';
+    card.appendChild(tapNote);
+  }
+
+  const stampAccept = el('div', null, 'ADD');
+  stampAccept.style.cssText = 'position:absolute;top:16px;left:16px;border:3px solid #2E7D32;color:#2E7D32;padding:3px 10px;font-weight:900;font-size:16px;border-radius:6px;transform:rotate(-15deg);opacity:0;pointer-events:none;';
+  const stampDecline = el('div', null, 'SKIP');
+  stampDecline.style.cssText = 'position:absolute;top:16px;right:16px;border:3px solid #C62828;color:#C62828;padding:3px 10px;font-weight:900;font-size:16px;border-radius:6px;transform:rotate(15deg);opacity:0;pointer-events:none;';
+  card.appendChild(stampAccept); card.appendChild(stampDecline);
+  cardWrap.appendChild(card);
+
+  function doDecline() { dailyPoolSwipedAway = true; render(); }
+  function doAccept() { poolSwipeCart.unshift({ id: '__daily_house_pool__', isDailyPool: true }); dailyPoolSwipedAway = true; render(); }
+  cardWrap._doAccept = doAccept;
+  cardWrap._doDecline = doDecline;
+
+  let startX = 0, currentX = 0, dragging = false, moved = false;
+  card.addEventListener('pointerdown', (e) => { dragging = true; moved = false; startX = e.clientX; card.style.transition = 'none'; card.setPointerCapture(e.pointerId); });
+  card.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    currentX = e.clientX - startX;
+    if (Math.abs(currentX) > 8) moved = true;
+    card.style.transform = `translateX(${currentX}px) rotate(${currentX / 20}deg)`;
+    if (currentX > 20) { stampAccept.style.opacity = Math.min(1, currentX / 100); stampDecline.style.opacity = 0; }
+    else if (currentX < -20) { stampDecline.style.opacity = Math.min(1, -currentX / 100); stampAccept.style.opacity = 0; }
+    else { stampAccept.style.opacity = 0; stampDecline.style.opacity = 0; }
+  });
+  function endDrag(e) {
+    if (!dragging) return;
+    dragging = false;
+    card.style.transition = 'transform 0.25s ease';
+    if (currentX > 100) { card.style.transform = `translateX(600px) rotate(30deg)`; setTimeout(doAccept, 150); }
+    else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(doDecline, 150); }
+    else {
+      card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0;
+      if (!moved) { dailyPoolFlipped = !dailyPoolFlipped; render(); }
+    }
+    currentX = 0;
+  }
+  card.addEventListener('pointerup', endDrag);
+  card.addEventListener('pointercancel', endDrag);
+  return cardWrap;
+}
+function renderPoolSwipeMode(extraRows, showDailyFirst) {
   document.body.classList.add('no-scroll');
   document.documentElement.classList.add('no-scroll');
   const wrap = el('div');
@@ -4119,7 +4190,13 @@ function renderPoolSwipeMode(extraRows) {
 
   const stackWrap = el('div');
   stackWrap.style.cssText = 'flex:1;position:relative;margin-top:8px;min-height:0;';
-  if (!poolSwipeStack.length) {
+  const totalLeft = poolSwipeStack.length + (showDailyFirst ? 1 : 0);
+  if (showDailyFirst) {
+    const cardEl = renderDailyPoolSwipeCard();
+    cardEl.style.position = 'absolute';
+    cardEl.style.top = '0'; cardEl.style.left = '0'; cardEl.style.right = '0';
+    stackWrap.appendChild(cardEl);
+  } else if (!poolSwipeStack.length) {
     const empty = el('div', 'empty', 'Nothing left to review right now.');
     empty.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;text-align:center;';
     stackWrap.appendChild(empty);
@@ -4135,7 +4212,7 @@ function renderPoolSwipeMode(extraRows) {
 
   const bottomBar = el('div'); bottomBar.id = 'swipeFixedBar';
   bottomBar.style.cssText = `position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:15;`;
-  const countText = el('div', null, `${poolSwipeStack.length} left to review`); countText.style.cssText = 'font-size:12px;color:var(--text-dim);';
+  const countText = el('div', null, `${totalLeft} left to review`); countText.style.cssText = 'font-size:12px;color:var(--text-dim);';
   bottomBar.appendChild(countText);
   const reviewBtn = el('button', null, `Review Cart (${poolSwipeCart.length})`);
   reviewBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 16px;font-size:13px;font-weight:800;';
@@ -4143,7 +4220,7 @@ function renderPoolSwipeMode(extraRows) {
   bottomBar.appendChild(reviewBtn);
   document.body.appendChild(bottomBar);
 
-  if (poolSwipeStack.length) {
+  if (showDailyFirst || poolSwipeStack.length) {
     const actionRow = el('div');
     actionRow.style.cssText = 'display:flex;gap:10px;margin-top:10px;';
     const declineBtn = el('button', null, '\u2715 Skip');
@@ -4171,6 +4248,18 @@ function renderPoolSwipeCart() {
   }
   wrap.appendChild(el('div', 'week-header', `Cart (${poolSwipeCart.length})`));
   poolSwipeCart.forEach(pool => {
+    if (pool.isDailyPool) {
+      const section = el('div', 'setup-card');
+      section.style.marginBottom = '10px';
+      section.appendChild(el('div', null, '\ud83c\udfe0 Daily House Pool \u2014 Make Your Picks')).style.cssText = 'font-size:14px;font-weight:800;margin-bottom:8px;';
+      section.appendChild(renderDailyChallenge());
+      const rmBtn = el('button', null, '\u2715 Remove from cart');
+      rmBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
+      rmBtn.onclick = () => { poolSwipeCart = poolSwipeCart.filter(p => !p.isDailyPool); dailyPoolSwipedAway = false; render(); };
+      section.appendChild(rmBtn);
+      wrap.appendChild(section);
+      return;
+    }
     const cardEl = renderPoolCard(pool);
     const rmBtn = el('button', null, '\u2715 Remove from cart');
     rmBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
@@ -4619,26 +4708,8 @@ function renderRequestedSection() {
   const wrap = el('div');
   wrap.appendChild(toggle);
 
-  const mineGlobal = list.filter(ch => ch.visibility === 'public');
-  const mineDirect = list.filter(ch => ch.visibility !== 'public');
-
-  const mineGlobalHeader = el('div', 'week-header', `${mineGlobalOpen ? '\u25be' : '\u25b8'} Posted Globally (${mineGlobal.length})`);
-  mineGlobalHeader.style.cursor = 'pointer';
-  mineGlobalHeader.onclick = () => { mineGlobalOpen = !mineGlobalOpen; render(); };
-  wrap.appendChild(mineGlobalHeader);
-  if (mineGlobalOpen) {
-    if (!mineGlobal.length) { wrap.appendChild(el('div', 'empty', 'Nothing posted publicly right now.')); }
-    else { mineGlobal.forEach(ch => wrap.appendChild(renderChallengeRow(ch))); }
-  }
-
-  const mineDirectHeader = el('div', 'week-header', `${mineDirectOpen ? '\u25be' : '\u25b8'} Posted to Friends (${mineDirect.length})`);
-  mineDirectHeader.style.cursor = 'pointer';
-  mineDirectHeader.onclick = () => { mineDirectOpen = !mineDirectOpen; render(); };
-  wrap.appendChild(mineDirectHeader);
-  if (mineDirectOpen) {
-    if (!mineDirect.length) { wrap.appendChild(el('div', 'empty', 'Nothing sent to a friend right now.')); }
-    else { mineDirect.forEach(ch => wrap.appendChild(renderChallengeRow(ch))); }
-  }
+  if (!list.length) { wrap.appendChild(el('div', 'empty', "You haven't sent any challenges right now.")); }
+  else { list.forEach(ch => wrap.appendChild(renderChallengeRow(ch))); }
   return wrap;
 }
 
