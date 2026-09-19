@@ -2254,7 +2254,7 @@ function renderDailyChallenge() {
   }
 
   const options = dailyOptionsForUser(profile.name);
-  wrap.appendChild(el('div', 'week-header', "Today's picks"));
+  wrap.appendChild(el('div', 'week-header', "Make your picks"));
   if (!options) {
     wrap.appendChild(el('div', 'empty', "Not enough games with posted lines today for a full slate of 5 — check back tomorrow."));
   } else {
@@ -4057,9 +4057,20 @@ function renderPoolSwipeCard(pool) {
 
   const bottom = el('div');
   bottom.style.cssText = 'text-align:center;';
+  const legLines = pool.legs.slice(0,4).map(leg => {
+    const opts = poolLegSideOptions(leg);
+    let valueTxt = '';
+    if (opts) {
+      if (leg.betType === 'total') valueTxt = `Total ${opts[0].label}`;
+      else if (leg.betType === 'moneyline') valueTxt = 'ML';
+      else if (leg.betType === 'playerprop') valueTxt = `${leg.playerName} ${opts[0].label}`;
+      else { const fav = opts.find(o => o.label.startsWith('-')) || opts[0]; valueTxt = `${fav.team} ${fav.label}`; }
+    }
+    return `${leg.gameLabel}${valueTxt ? ' \u2014 ' + valueTxt : ''}`;
+  });
   bottom.innerHTML = `
     <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">Games in this pool</div>
-    <div style="font-size:12.5px;color:#3a3528;font-weight:600;line-height:1.5;">${pool.legs.slice(0,4).map(l => l.gameLabel).join('<br>')}${pool.legs.length > 4 ? `<br>+${pool.legs.length - 4} more` : ''}</div>
+    <div style="font-size:12px;color:#3a3528;font-weight:600;line-height:1.5;">${legLines.join('<br>')}${pool.legs.length > 4 ? `<br>+${pool.legs.length - 4} more` : ''}</div>
   `;
   card.appendChild(bottom);
 
@@ -4132,8 +4143,23 @@ function renderDailyPoolSwipeCard() {
     top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:6px;">Today's Games</div>`;
     card.appendChild(top);
     const list = el('div');
-    list.style.cssText = 'font-size:12.5px;color:#3a3528;font-weight:600;line-height:1.7;text-align:left;';
-    list.innerHTML = slate.map(o => `${o.gameLabel} \u2014 ${o.betType === 'total' ? 'Total' : 'Spread'}`).join('<br>');
+    list.style.cssText = 'font-size:12px;color:#3a3528;font-weight:600;line-height:1.7;text-align:left;';
+    list.innerHTML = slate.map(o => {
+      const g = (DATA[o.sport] || []).find(x => x.id === o.gameId);
+      let valueTxt = o.betType === 'total' ? 'Total' : 'Spread';
+      if (g) {
+        if (o.betType === 'total' && g.overUnder !== null && g.overUnder !== undefined) valueTxt = `Total ${g.overUnder}`;
+        else if (o.betType === 'spread') {
+          const spread = computeSpread(o.sport, g);
+          if (spread !== null) {
+            const favSide = spread <= 0 ? g.home : g.away;
+            const magnitude = Math.abs(spread);
+            valueTxt = `${favSide} ${magnitude === 0 ? 'PK' : '-' + magnitude}`;
+          }
+        }
+      }
+      return `${o.gameLabel} \u2014 ${valueTxt}`;
+    }).join('<br>');
     card.appendChild(list);
     const tapNote = el('div', null, 'Tap to flip back');
     tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:12px;';
