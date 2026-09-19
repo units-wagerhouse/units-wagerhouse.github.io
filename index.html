@@ -942,7 +942,9 @@ function renderTabs() {
   bar.className = 'league-scroller';
   if (!profile) return;
   const allCh = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
-  const invitesCount = allCh.filter(ch => ch.status === 'open' && ((ch.visibility === 'public' && ch.creator !== profile.name) || pendingFriendChallengesForMe().some(p => p.id === ch.id))).length;
+  const declinedIds0 = declinedChallengeIdsFor(profile.name);
+  const cartIds0 = cartChallengeIdsFor(profile.name);
+  const invitesCount = allCh.filter(ch => ch.status === 'open' && !declinedIds0.has(ch.id) && !cartIds0.has(ch.id) && ((ch.visibility === 'public' && ch.creator !== profile.name) || pendingFriendChallengesForMe().some(p => p.id === ch.id))).length;
   const activeCount = allCh.filter(ch => ch.status === 'accepted' && (ch.creator === profile.name || ch.acceptedBy === profile.name) && settlePick(ch).status === 'pending').length;
   const counts = { requested: invitesCount, active: activeCount };
   [['games','Create'],['requested','Invites'],['active','Active'],['settled','Completed']].forEach(([id,label]) => {
@@ -2143,7 +2145,7 @@ function renderPoolTabs() {
   if (!profile) return;
   const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
   const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
-  const receivedCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
+  const receivedCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && !poolSwipeDeclinedIds.has(p.id) && !poolSwipeCart.some(c => c.id === p.id) && (
     p.visibility === 'public' || (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
   )).length + (dailyPoolDone ? 0 : 1);
   const activeCount = allPools0.filter(p => p.status !== 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name))).length;
@@ -4289,39 +4291,45 @@ function renderSwipeMode(extraRows) {
 
   (extraRows || []).forEach(row => { if (row) { row.style.flexShrink = '0'; wrap.appendChild(row); } });
 
-  const header = el('div');
-  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 0;flex-shrink:0;';
-  header.appendChild(el('div', null, `${swipeStack.length} left to review`)).style.cssText = 'font-size:12px;color:var(--text-dim);';
-  const cartBtn = el('button', null, `Review cart (${swipeCart.length})`);
-  cartBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:7px 12px;font-size:12px;font-weight:700;';
-  cartBtn.onclick = () => { challengeBrowseMode = 'cart'; render(); };
-  header.appendChild(cartBtn);
-  wrap.appendChild(header);
-
+  const stackWrap = el('div');
+  stackWrap.style.cssText = 'flex:1;position:relative;margin-top:8px;min-height:0;';
   if (!swipeStack.length) {
-    wrap.appendChild(el('div', 'empty', swipeCart.length ? 'All caught up — check your cart to confirm picks.' : 'Nothing to review right now.'));
-    return wrap;
+    const empty = el('div', 'empty', swipeCart.length ? 'All caught up — check your cart to confirm picks.' : 'Nothing to review right now.');
+    empty.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;text-align:center;';
+    stackWrap.appendChild(empty);
+  } else {
+    const cardEl = renderSwipeCard(swipeStack[0]);
+    cardEl.style.height = '100%';
+    cardEl.style.display = 'flex';
+    stackWrap.appendChild(cardEl);
+    requestAnimationFrame(() => {
+      cardEl.querySelectorAll('.swipe-team-name').forEach(shrinkTextToFit);
+    });
   }
+  wrap.appendChild(stackWrap);
 
-  const cardEl = renderSwipeCard(swipeStack[0]);
-  cardEl.style.flex = '1';
-  cardEl.style.minHeight = '0';
-  cardEl.style.display = 'flex';
-  wrap.appendChild(cardEl);
-  requestAnimationFrame(() => {
-    cardEl.querySelectorAll('.swipe-team-name').forEach(shrinkTextToFit);
-  });
+  const bottomBar = el('div'); bottomBar.id = 'swipeFixedBar';
+  bottomBar.style.cssText = `position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:15;`;
+  const countText = el('div', null, `${swipeStack.length} left to review`); countText.style.cssText = 'font-size:12px;color:var(--text-dim);';
+  bottomBar.appendChild(countText);
+  const reviewBtn = el('button', null, `Review Cart (${swipeCart.length})`);
+  reviewBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 16px;font-size:13px;font-weight:800;';
+  reviewBtn.onclick = () => { challengeBrowseMode = 'cart'; render(); };
+  bottomBar.appendChild(reviewBtn);
+  document.body.appendChild(bottomBar);
 
-  const bar = el('div', 'swipe-fixed-bar');
-  bar.id = 'swipeFixedBar';
-  const declineBtn = el('button', null, '\u2715 Decline');
-  declineBtn.style.cssText = 'flex:1;background:none;border:1px solid var(--danger);color:var(--danger);border-radius:8px;padding:14px;font-weight:700;font-size:14px;';
-  declineBtn.onclick = () => cardEl._doDecline();
-  const acceptBtn = el('button', null, '\u2713 Add to cart');
-  acceptBtn.style.cssText = 'flex:1;background:var(--accent-dark);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:14px;font-weight:700;font-size:14px;';
-  acceptBtn.onclick = () => cardEl._doAccept();
-  bar.appendChild(declineBtn); bar.appendChild(acceptBtn);
-  document.body.appendChild(bar);
+  if (swipeStack.length) {
+    const actionRow = el('div');
+    actionRow.style.cssText = 'display:flex;gap:10px;margin-top:10px;';
+    const declineBtn = el('button', null, '\u2715 Decline');
+    declineBtn.style.cssText = 'flex:1;background:none;border:1px solid var(--danger);color:var(--danger);border-radius:10px;padding:12px;font-size:14px;font-weight:800;';
+    declineBtn.onclick = () => { const cardEl = stackWrap.firstElementChild; if (cardEl && cardEl._doDecline) cardEl._doDecline(); };
+    const acceptBtn = el('button', null, '\u2713 Add to Cart');
+    acceptBtn.style.cssText = 'flex:1;background:var(--accent-dark);border:1px solid var(--accent);color:var(--accent);border-radius:10px;padding:12px;font-size:14px;font-weight:800;';
+    acceptBtn.onclick = () => { const cardEl = stackWrap.firstElementChild; if (cardEl && cardEl._doAccept) cardEl._doAccept(); };
+    actionRow.appendChild(declineBtn); actionRow.appendChild(acceptBtn);
+    wrap.appendChild(actionRow);
+  }
   return wrap;
 }
 
