@@ -371,6 +371,8 @@ let activeChallengesOpen = false;
 let completedChallengesOpen = false;
 let acceptedChallengeLeague = null; // sport id or null
 let acceptedChallengeDateFilter = 'all'; // 'today' | 'week' | 'month' | 'year' | 'all'
+let poolCompletedLeague = null;
+let poolCompletedDateFilter = 'all';
 let openChallengeLeague = null; // sport id or null
 let openChallengeGameFilter = null; // gameId or null
 let openChallengeDateFilter = 'week'; // 'today' | 'tomorrow' | 'week'
@@ -2079,6 +2081,9 @@ function renderDailyOptionCard(opt, remaining, fullSlate, usedMulligan) {
       allPicks.push(pick);
       try {
         await savePicks(allPicks);
+        if (weeklyRemaining(profile.name, wk) === 0) {
+          poolSwipeCart = poolSwipeCart.filter(p => !p.isDailyPool);
+        }
       } catch (saveErr) {
         allPicks.pop();
         lockBtn.disabled = false; lockBtn.textContent = `Lock: ${chipsFor(units)}`;
@@ -2207,6 +2212,64 @@ function renderPoolsSection() {
     if (!activePools.length) { wrap.appendChild(el('div', 'empty', "You haven't built or joined any pools yet.")); }
     else { activePools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
   } else if (poolsActiveTab === 'settled') {
+    const leaguesPresent = [...new Set(completedPools.map(p => p.sport).filter(Boolean))];
+    if (leaguesPresent.length) {
+      const scroller = el('div', 'league-scroller');
+      const allPill = el('button', 'league-pill' + (poolCompletedLeague === null ? ' active' : ''), 'All leagues');
+      allPill.onclick = () => { poolCompletedLeague = null; render(); };
+      scroller.appendChild(allPill);
+      leaguesPresent.forEach(sport => {
+        const label = (LEAGUES_META.find(l => l.id === sport) || {}).label || (sport || 'sport').toUpperCase();
+        const pill = el('button', 'league-pill' + (poolCompletedLeague === sport ? ' active' : ''), label);
+        pill.onclick = () => { poolCompletedLeague = sport; render(); };
+        scroller.appendChild(pill);
+      });
+      wrap.appendChild(scroller);
+    }
+    const dateScroller = el('div', 'league-scroller');
+    [['today','Today'],['week','Week'],['month','Month'],['year','Year'],['all','All']].forEach(([id,label]) => {
+      const pill = el('button', 'league-pill' + (poolCompletedDateFilter === id ? ' active' : ''), label);
+      pill.onclick = () => { poolCompletedDateFilter = id; render(); };
+      dateScroller.appendChild(pill);
+    });
+    wrap.appendChild(dateScroller);
+
+    const byLeague2 = poolCompletedLeague === null ? completedPools : completedPools.filter(p => p.sport === poolCompletedLeague);
+    const now3 = new Date();
+    const filteredCompleted = byLeague2.filter(p => {
+      if (poolCompletedDateFilter === 'all') return true;
+      const d = new Date(p.timestamp);
+      if (poolCompletedDateFilter === 'today') return d.getFullYear() === now3.getFullYear() && d.getMonth() === now3.getMonth() && d.getDate() === now3.getDate();
+      if (poolCompletedDateFilter === 'week') { const weekAgo = new Date(now3); weekAgo.setDate(weekAgo.getDate() - 7); return d >= weekAgo && d <= now3; }
+      if (poolCompletedDateFilter === 'month') return d.getFullYear() === now3.getFullYear() && d.getMonth() === now3.getMonth();
+      if (poolCompletedDateFilter === 'year') return d.getFullYear() === now3.getFullYear();
+      return true;
+    });
+
+    const timesPlaced = filteredCompleted.filter(p => (p.payouts || []).some(po => po.name === profile.name && po.placed)).length;
+    const placementPct = filteredCompleted.length ? (timesPlaced / filteredCompleted.length * 100) : 0;
+    const totalGames = filteredCompleted.reduce((s,p) => s + p.legs.length, 0);
+
+    const banner2 = el('div', 'rank-banner');
+    banner2.style.marginTop = '5px';
+    const p1 = el('div', 'rank-cell');
+    p1.appendChild(el('div', 'rc-label', 'Total pools'));
+    p1.appendChild(el('div', 'rc-value', String(filteredCompleted.length)));
+    banner2.appendChild(p1);
+    const p2 = el('div', 'rank-cell');
+    p2.appendChild(el('div', 'rc-label', 'Times<br>placed'));
+    p2.appendChild(el('div', 'rc-value', String(timesPlaced))).style.color = timesPlaced > 0 ? '#4CAF50' : 'var(--text)';
+    banner2.appendChild(p2);
+    const p3 = el('div', 'rank-cell');
+    p3.appendChild(el('div', 'rc-label', 'Placement<br>Percentage'));
+    p3.appendChild(el('div', 'rc-value', placementPct.toFixed(0) + '%'));
+    banner2.appendChild(p3);
+    const p4 = el('div', 'rank-cell');
+    p4.appendChild(el('div', 'rc-label', 'Total games'));
+    p4.appendChild(el('div', 'rc-value', String(totalGames)));
+    banner2.appendChild(p4);
+    wrap.appendChild(banner2);
+
     if (dailyPoolDone) {
       const dhpRow = el('div', 'event-card');
       dhpRow.style.cssText = 'cursor:pointer;display:flex;justify-content:space-between;align-items:center;';
@@ -2219,8 +2282,8 @@ function renderPoolsSection() {
         wrap.appendChild(inner);
       }
     }
-    if (!completedPools.length && !dailyPoolDone) { wrap.appendChild(el('div', 'empty', 'No completed pools yet.')); }
-    else { completedPools.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
+    if (!filteredCompleted.length && !dailyPoolDone) { wrap.appendChild(el('div', 'empty', 'No completed pools yet.')); }
+    else { filteredCompleted.slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(p => wrap.appendChild(renderPoolCard(p))); }
   }
   return wrap;
 }
@@ -2229,22 +2292,6 @@ function renderDailyChallenge() {
   const wk = houseDayKey(new Date());
   const remaining = weeklyRemaining(profile.name, wk);
   const myBets = weeklyBetsFor(profile.name, wk);
-
-  const banner = el('div', 'rank-banner');
-  const b1 = el('div', 'rank-cell');
-  b1.appendChild(el('div', 'rc-label', 'House bet'));
-  b1.appendChild(el('div', 'rc-value accent', remaining + ' / ' + HOUSE_BANK_TOTAL + 'u'));
-  b1.appendChild(el('div', 'rc-sub', 'Resets daily'));
-  banner.appendChild(b1);
-  wrap.appendChild(banner);
-
-  if (myBets.length === 0) {
-    const prevDays = allWeekKeysFor(profile.name).filter(w => w < wk);
-    const lastDay = prevDays.length ? prevDays[prevDays.length - 1] : null;
-    if (lastDay && weeklyAllSettled(profile.name, lastDay)) {
-      wrap.appendChild(renderWeekFinalRecap(profile.name, lastDay));
-    }
-  }
 
   if (myBets.length) {
     wrap.appendChild(el('div', 'week-header', "Today's bets (tap to expand)"));
@@ -3381,6 +3428,9 @@ function renderPoolJoinForm(pool) {
     try {
       await savePicks(allPicks);
       poolJoinTarget = null; poolJoinSides = {}; poolJoinUnits = {};
+      poolSwipeCart = poolSwipeCart.filter(p => p.id !== pool.id);
+      poolsActiveTab = 'accepted';
+      poolBrowseMode = 'swipe';
       render();
     } catch (e) {
       allPicks[idx].participants.pop();
@@ -4035,42 +4085,73 @@ async function declineChallenge(ch) {
   catch (e) { allPicks[idx] = prev; allPicks.pop(); alert("Couldn't decline (" + describeFetchError(e) + ") — try again."); render(); }
 }
 
+let poolSwipeFlipped = {}; // pool.id -> bool
 function renderPoolSwipeCard(pool) {
   const cardWrap = el('div');
   cardWrap.style.cssText = 'position:relative;touch-action:pan-y;user-select:none;display:flex;flex-direction:column;';
   const card = el('div', 'swipe-card-big');
-  card.style.cssText = 'padding:20px 24px;cursor:grab;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
+  card.style.cssText = 'padding:14px 24px;cursor:pointer;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
   const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 ' + (pool.targetFriend || 'Individual'));
+  const flipped = !!poolSwipeFlipped[pool.id];
 
-  const top = el('div');
-  top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:3px;">Pool \u00b7 from ${pool.creator}</div>`;
-  card.appendChild(top);
+  if (!flipped) {
+    const top = el('div');
+    top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:3px;">Pool \u00b7 from ${pool.creator}</div>`;
+    card.appendChild(top);
 
-  const nameId = 'poolswipe-name-' + pool.id.replace(/[^a-zA-Z0-9]/g, '');
-  const mid = el('div');
-  mid.style.cssText = 'text-align:center;margin:18px 0;';
-  mid.innerHTML = `<div id="${nameId}" style="font-size:20px;font-weight:900;color:#1a1a1a;white-space:nowrap;overflow:hidden;margin-bottom:8px;">${pool.name || pool.gameLabel}</div><div style="font-size:12px;color:#5a5342;font-weight:700;">${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 top ${pool.paidPositions} paid \u00b7 ${poolVisText}</div>`;
-  card.appendChild(mid);
-  setTimeout(() => { const el2 = document.getElementById(nameId); if (el2) shrinkTextToFit(el2, 14); }, 0);
+    const nameId = 'poolswipe-name-' + pool.id.replace(/[^a-zA-Z0-9]/g, '');
+    const mid = el('div');
+    mid.style.cssText = 'text-align:center;margin:18px 0;';
+    mid.innerHTML = `<div id="${nameId}" style="font-size:20px;font-weight:900;color:#1a1a1a;white-space:nowrap;overflow:hidden;margin-bottom:8px;">${pool.name || pool.gameLabel}</div><div style="font-size:12px;color:#5a5342;font-weight:700;">${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 top ${pool.paidPositions} paid \u00b7 ${poolVisText}</div>`;
+    card.appendChild(mid);
+    setTimeout(() => { const el2 = document.getElementById(nameId); if (el2) shrinkTextToFit(el2, 14); }, 0);
 
-  const bottom = el('div');
-  bottom.style.cssText = 'text-align:center;';
-  const legLines = pool.legs.slice(0,4).map(leg => {
-    const opts = poolLegSideOptions(leg);
-    let valueTxt = '';
-    if (opts) {
-      if (leg.betType === 'total') valueTxt = `Total ${opts[0].label}`;
-      else if (leg.betType === 'moneyline') valueTxt = 'ML';
-      else if (leg.betType === 'playerprop') valueTxt = `${leg.playerName} ${opts[0].label}`;
-      else { const fav = opts.find(o => o.label.startsWith('-')) || opts[0]; valueTxt = `${fav.team} ${fav.label}`; }
-    }
-    return `${leg.gameLabel}${valueTxt ? ' \u2014 ' + valueTxt : ''}`;
-  });
-  bottom.innerHTML = `
-    <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">Games in this pool</div>
-    <div style="font-size:12px;color:#3a3528;font-weight:600;line-height:1.5;">${legLines.join('<br>')}${pool.legs.length > 4 ? `<br>+${pool.legs.length - 4} more` : ''}</div>
-  `;
-  card.appendChild(bottom);
+    const bottom = el('div');
+    bottom.style.cssText = 'text-align:center;';
+    const legLines = pool.legs.slice(0,4).map(leg => {
+      const opts = poolLegSideOptions(leg);
+      let valueTxt = '';
+      if (opts) {
+        if (leg.betType === 'total') valueTxt = `Total ${opts[0].label}`;
+        else if (leg.betType === 'moneyline') valueTxt = 'ML';
+        else if (leg.betType === 'playerprop') valueTxt = `${leg.playerName} ${opts[0].label}`;
+        else { const fav = opts.find(o => o.label.startsWith('-')) || opts[0]; valueTxt = `${fav.team} ${fav.label}`; }
+      }
+      return `${leg.gameLabel}${valueTxt ? ' \u2014 ' + valueTxt : ''}`;
+    });
+    bottom.innerHTML = `
+      <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">Games in this pool</div>
+      <div style="font-size:12px;color:#3a3528;font-weight:600;line-height:1.5;">${legLines.join('<br>')}${pool.legs.length > 4 ? `<br>+${pool.legs.length - 4} more` : ''}</div>
+    `;
+    card.appendChild(bottom);
+    const tapNote = el('div', null, 'Tap for full details');
+    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:10px;';
+    card.appendChild(tapNote);
+  } else {
+    const top = el('div');
+    top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:8px;">${pool.name || pool.gameLabel} \u2014 Full Details</div>`;
+    card.appendChild(top);
+    const list = el('div');
+    list.style.cssText = 'font-size:12.5px;color:#3a3528;font-weight:600;line-height:1.8;text-align:left;overflow-y:auto;flex:1;min-height:0;';
+    list.innerHTML = pool.legs.map(leg => {
+      const opts = poolLegSideOptions(leg);
+      let valueTxt = '';
+      if (opts) {
+        if (leg.betType === 'total') valueTxt = `Total ${opts[0].label}`;
+        else if (leg.betType === 'moneyline') valueTxt = 'Moneyline';
+        else if (leg.betType === 'playerprop') valueTxt = `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} ${opts[0].label}`;
+        else valueTxt = opts.map(o => `${o.team} ${o.label}`).join(' vs ');
+      }
+      const idx = gameIndex[leg.gameId];
+      const awayFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.away) : leg.gameLabel.split(' @ ')[0];
+      const homeFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.home) : leg.gameLabel.split(' @ ')[1];
+      return `<div style="margin-bottom:8px;"><b>${awayFull} @ ${homeFull}</b><br><span style="color:#5a5342;">${valueTxt}</span></div>`;
+    }).join('');
+    card.appendChild(list);
+    const tapNote = el('div', null, 'Tap to flip back');
+    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:8px;flex-shrink:0;';
+    card.appendChild(tapNote);
+  }
 
   const stampAccept = el('div', null, 'ADD');
   stampAccept.style.cssText = 'position:absolute;top:16px;left:16px;border:3px solid #2E7D32;color:#2E7D32;padding:3px 10px;font-weight:900;font-size:16px;border-radius:6px;transform:rotate(-15deg);opacity:0;pointer-events:none;';
@@ -4084,11 +4165,12 @@ function renderPoolSwipeCard(pool) {
   cardWrap._doAccept = doAccept;
   cardWrap._doDecline = doDecline;
 
-  let startX = 0, currentX = 0, dragging = false;
-  card.addEventListener('pointerdown', (e) => { dragging = true; startX = e.clientX; card.style.transition = 'none'; card.setPointerCapture(e.pointerId); });
+  let startX = 0, currentX = 0, dragging = false, moved = false;
+  card.addEventListener('pointerdown', (e) => { dragging = true; moved = false; startX = e.clientX; card.style.transition = 'none'; card.setPointerCapture(e.pointerId); });
   card.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     currentX = e.clientX - startX;
+    if (Math.abs(currentX) > 8) moved = true;
     card.style.transform = `translateX(${currentX}px) rotate(${currentX / 20}deg)`;
     if (currentX > 20) { stampAccept.style.opacity = Math.min(1, currentX / 100); stampDecline.style.opacity = 0; }
     else if (currentX < -20) { stampDecline.style.opacity = Math.min(1, -currentX / 100); stampAccept.style.opacity = 0; }
@@ -4100,9 +4182,13 @@ function renderPoolSwipeCard(pool) {
     card.style.transition = 'transform 0.25s ease';
     if (currentX > 100) { card.style.transform = `translateX(600px) rotate(30deg)`; setTimeout(doAccept, 150); }
     else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(doDecline, 150); }
-    else { card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0; }
+    else {
+      card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0;
+      if (!moved) { poolSwipeFlipped[pool.id] = !poolSwipeFlipped[pool.id]; render(); }
+    }
     currentX = 0;
   }
+
   card.addEventListener('pointerup', endDrag);
   card.addEventListener('pointercancel', endDrag);
   return cardWrap;
@@ -4218,7 +4304,8 @@ function renderPoolSwipeMode(extraRows, showDailyFirst) {
   if (showDailyFirst) {
     const cardEl = renderDailyPoolSwipeCard();
     cardEl.style.position = 'absolute';
-    cardEl.style.top = '0'; cardEl.style.left = '0'; cardEl.style.right = '0';
+    cardEl.style.top = '0'; cardEl.style.left = '0'; cardEl.style.right = '0'; cardEl.style.bottom = '0';
+    cardEl.style.display = 'flex';
     stackWrap.appendChild(cardEl);
   } else if (!poolSwipeStack.length) {
     const empty = el('div', 'empty', 'Nothing left to review right now.');
@@ -4228,7 +4315,8 @@ function renderPoolSwipeMode(extraRows, showDailyFirst) {
     poolSwipeStack.slice(0, 3).reverse().forEach((pool, i) => {
       const cardEl = renderPoolSwipeCard(pool);
       cardEl.style.position = 'absolute';
-      cardEl.style.top = '0'; cardEl.style.left = '0'; cardEl.style.right = '0';
+      cardEl.style.top = '0'; cardEl.style.left = '0'; cardEl.style.right = '0'; cardEl.style.bottom = '0';
+      cardEl.style.display = 'flex';
       stackWrap.appendChild(cardEl);
     });
   }
@@ -4273,7 +4361,7 @@ function renderPoolSwipeCart() {
   wrap.appendChild(el('div', 'week-header', `Cart (${poolSwipeCart.length})`));
   poolSwipeCart.forEach(pool => {
     if (pool.isDailyPool) {
-      const section = el('div', 'setup-card');
+      const section = el('div', 'event-card');
       section.style.marginBottom = '10px';
       section.appendChild(el('div', null, '\ud83c\udfe0 Daily House Pool \u2014 Make Your Picks')).style.cssText = 'font-size:14px;font-weight:800;margin-bottom:8px;';
       section.appendChild(renderDailyChallenge());
@@ -4836,32 +4924,34 @@ function renderCompletedChallenges(mode) {
   const mine = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && (p.creator === profile.name || p.acceptedBy === profile.name || p.targetFriend === profile.name));
 
   // league filter chips
-  const leaguesPresent = [...new Set(mine.map(ch => ch.sport).filter(Boolean))];
-  if (leaguesPresent.length) {
-    const scroller = el('div', 'league-scroller');
-    const allPill = el('button', 'league-pill' + (acceptedChallengeLeague === null ? ' active' : ''), 'All leagues');
-    allPill.onclick = () => { acceptedChallengeLeague = null; render(); };
-    scroller.appendChild(allPill);
-    leaguesPresent.forEach(sport => {
-      const label = (LEAGUES_META.find(l => l.id === sport) || {}).label || (sport || 'sport').toUpperCase();
-      const pill = el('button', 'league-pill' + (acceptedChallengeLeague === sport ? ' active' : ''), label);
-      pill.onclick = () => { acceptedChallengeLeague = sport; render(); };
-      scroller.appendChild(pill);
+  if (mode !== 'active') {
+    const leaguesPresent = [...new Set(mine.map(ch => ch.sport).filter(Boolean))];
+    if (leaguesPresent.length) {
+      const scroller = el('div', 'league-scroller');
+      const allPill = el('button', 'league-pill' + (acceptedChallengeLeague === null ? ' active' : ''), 'All leagues');
+      allPill.onclick = () => { acceptedChallengeLeague = null; render(); };
+      scroller.appendChild(allPill);
+      leaguesPresent.forEach(sport => {
+        const label = (LEAGUES_META.find(l => l.id === sport) || {}).label || (sport || 'sport').toUpperCase();
+        const pill = el('button', 'league-pill' + (acceptedChallengeLeague === sport ? ' active' : ''), label);
+        pill.onclick = () => { acceptedChallengeLeague = sport; render(); };
+        scroller.appendChild(pill);
+      });
+      wrap.appendChild(scroller);
+    }
+
+    const dateScroller = el('div', 'league-scroller');
+    [['today','Today'],['week','Week'],['month','Month'],['year','Year'],['all','All']].forEach(([id,label]) => {
+      const pill = el('button', 'league-pill' + (acceptedChallengeDateFilter === id ? ' active' : ''), label);
+      pill.onclick = () => { acceptedChallengeDateFilter = id; render(); };
+      dateScroller.appendChild(pill);
     });
-    wrap.appendChild(scroller);
+    wrap.appendChild(dateScroller);
   }
 
-  const dateScroller = el('div', 'league-scroller');
-  [['today','Today'],['week','Week'],['month','Month'],['year','Year'],['all','All']].forEach(([id,label]) => {
-    const pill = el('button', 'league-pill' + (acceptedChallengeDateFilter === id ? ' active' : ''), label);
-    pill.onclick = () => { acceptedChallengeDateFilter = id; render(); };
-    dateScroller.appendChild(pill);
-  });
-  wrap.appendChild(dateScroller);
-
-  const byLeague = acceptedChallengeLeague === null ? mine : mine.filter(ch => ch.sport === acceptedChallengeLeague);
+  const byLeague = (mode === 'active' || acceptedChallengeLeague === null) ? mine : mine.filter(ch => ch.sport === acceptedChallengeLeague);
   const now2 = new Date();
-  const filtered = byLeague.filter(ch => {
+  const filtered = mode === 'active' ? byLeague : byLeague.filter(ch => {
     if (acceptedChallengeDateFilter === 'all') return true;
     const idx = gameIndex[ch.gameId];
     const d = (idx && idx.game && idx.game.start) ? new Date(idx.game.start) : new Date(ch.timestamp);
@@ -4892,26 +4982,28 @@ function renderCompletedChallenges(mode) {
   const winPct = (wins + losses) > 0 ? (wins / (wins + losses) * 100) : 0;
   const pendingUnits = active.reduce((s,ch) => s + displayUnitsFor(ch), 0);
 
-  const banner = el('div', 'rank-banner');
-  banner.style.marginTop = '5px';
-  const c1 = el('div', 'rank-cell');
-  c1.appendChild(el('div', 'rc-label', 'Total challenges'));
-  c1.appendChild(el('div', 'rc-value', String(settledOnes.length)));
-  banner.appendChild(c1);
-  const c2 = el('div', 'rank-cell');
-  c2.appendChild(el('div', 'rc-label', 'Units<br>won'));
-  const unitsWonRounded = Math.round(unitsWonChallenges);
-  c2.appendChild(el('div', 'rc-value', (unitsWonRounded > 0 ? '+' : '') + unitsWonRounded)).style.color = unitsWonChallenges >= 0 ? '#4CAF50' : 'var(--danger)';
-  banner.appendChild(c2);
-  const c3 = el('div', 'rank-cell');
-  c3.appendChild(el('div', 'rc-label', 'Win<br>Percentage'));
-  c3.appendChild(el('div', 'rc-value', winPct.toFixed(0) + '%'));
-  banner.appendChild(c3);
-  const c4 = el('div', 'rank-cell');
-  c4.appendChild(el('div', 'rc-label', 'Pending units'));
-  c4.appendChild(el('div', 'rc-value', String(pendingUnits)));
-  banner.appendChild(c4);
-  wrap.appendChild(banner);
+  if (mode !== 'active') {
+    const banner = el('div', 'rank-banner');
+    banner.style.marginTop = '5px';
+    const c1 = el('div', 'rank-cell');
+    c1.appendChild(el('div', 'rc-label', 'Total challenges'));
+    c1.appendChild(el('div', 'rc-value', String(settledOnes.length)));
+    banner.appendChild(c1);
+    const c2 = el('div', 'rank-cell');
+    c2.appendChild(el('div', 'rc-label', 'Units<br>won'));
+    const unitsWonRounded = Math.round(unitsWonChallenges);
+    c2.appendChild(el('div', 'rc-value', (unitsWonRounded > 0 ? '+' : '') + unitsWonRounded)).style.color = unitsWonChallenges >= 0 ? '#4CAF50' : 'var(--danger)';
+    banner.appendChild(c2);
+    const c3 = el('div', 'rank-cell');
+    c3.appendChild(el('div', 'rc-label', 'Win<br>Percentage'));
+    c3.appendChild(el('div', 'rc-value', winPct.toFixed(0) + '%'));
+    banner.appendChild(c3);
+    const c4 = el('div', 'rank-cell');
+    c4.appendChild(el('div', 'rc-label', 'Pending units'));
+    c4.appendChild(el('div', 'rc-value', String(pendingUnits)));
+    banner.appendChild(c4);
+    wrap.appendChild(banner);
+  }
 
   if (mode === 'active' || mode === 'both') {
     if (mode === 'both') {
