@@ -1312,8 +1312,10 @@ function renderFriendsScreen() {
   const myGroups = allPicks.filter(p => p.poolType === 'friendGroup' && (p.members || []).some(m => m.uid === profile.uid));
   wrap.appendChild(el('div', 'week-header', `Friend Groups (${myGroups.length})`));
   myGroups.forEach(grp => {
-    const row = el('div', 'pick-row');
-    row.style.cursor = 'pointer';
+    const groupCard = el('div', 'event-card');
+
+    const row = el('div');
+    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;cursor:pointer;';
     const left = el('div');
     left.appendChild(el('div', 'who', grp.name));
     left.appendChild(el('div', 'detail', grp.members.map(m => m.name).join(', ')));
@@ -1332,22 +1334,22 @@ function renderFriendsScreen() {
       };
       row.appendChild(delBtn);
     }
-    wrap.appendChild(row);
+    groupCard.appendChild(row);
 
     if (groupLeaderboardOpen[grp.id]) {
       const memberUids = new Set(grp.members.map(m => m.uid));
       const invitableFriends = myFriends.filter(f => !memberUids.has(f.uid));
 
       const inviteToggleBtn = el('button', null, groupInviteOpen[grp.id] ? '\u2212 Cancel' : '+ Invite Friend');
-      inviteToggleBtn.style.cssText = 'width:100%;margin-bottom:8px;background:none;border:1px dashed var(--accent);color:var(--accent);border-radius:8px;padding:8px;font-size:12px;font-weight:700;';
+      inviteToggleBtn.style.cssText = 'width:100%;margin-top:10px;background:none;border:1px dashed var(--accent);color:var(--accent);border-radius:8px;padding:8px;font-size:12px;font-weight:700;';
       inviteToggleBtn.onclick = () => { groupInviteOpen[grp.id] = !groupInviteOpen[grp.id]; render(); };
-      wrap.appendChild(inviteToggleBtn);
+      groupCard.appendChild(inviteToggleBtn);
 
       if (groupInviteOpen[grp.id]) {
         if (!invitableFriends.length) {
-          wrap.appendChild(el('div', 'empty', 'All your friends are already in this group.'));
+          groupCard.appendChild(el('div', 'empty', 'All your friends are already in this group.'));
         } else {
-          const inviteRow = el('div'); inviteRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+          const inviteRow = el('div'); inviteRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
           const friendSel = el('select');
           friendSel.style.cssText = 'flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;box-sizing:border-box;';
           invitableFriends.forEach(f => { const o = document.createElement('option'); o.value = f.uid; o.textContent = f.name; friendSel.appendChild(o); });
@@ -1372,13 +1374,13 @@ function renderFriendsScreen() {
             }
           };
           inviteRow.appendChild(friendSel); inviteRow.appendChild(addBtn);
-          wrap.appendChild(inviteRow);
+          groupCard.appendChild(inviteRow);
         }
       }
     }
 
     if (groupLeaderboardOpen[grp.id]) {
-      const lbCard = el('div'); lbCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin:-4px 0 8px;';
+      const lbCard = el('div'); lbCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin-top:10px;';
 
       const stats = computeGroupLeaderboardStats(grp);
       const matchWins = grp.matchWins || {};
@@ -1429,9 +1431,10 @@ function renderFriendsScreen() {
         catch (e) { Object.assign(allPicks[idx], prev); alert("Couldn't reset (" + describeFetchError(e) + ") — try again."); }
       };
       lbCard.appendChild(resetBtn);
-      wrap.appendChild(lbCard);
+      groupCard.appendChild(lbCard);
     }
-    wrap.appendChild(renderGroupCommentsSection(grp));
+    if (groupLeaderboardOpen[grp.id]) groupCard.appendChild(renderGroupCommentsSection(grp));
+    wrap.appendChild(groupCard);
   });
 
   const groupToggleBtn = el('button', null, groupBuilderOpen ? '\u2212 Cancel' : '+ Create Group');
@@ -4395,6 +4398,7 @@ function renderPoolSwipeMode(extraRows, showDailyFirst) {
 
   const stackWrap = el('div');
   stackWrap.style.cssText = 'flex:1;position:relative;margin-top:8px;min-height:0;';
+  attachPullToRefresh(stackWrap);
   const totalLeft = poolSwipeStack.length + (showDailyFirst ? 1 : 0);
   if (showDailyFirst) {
     const cardEl = renderDailyPoolSwipeCard();
@@ -4577,6 +4581,50 @@ function shrinkTextToFit(elm, minSize) {
     guard++;
   }
 }
+function attachPullToRefresh(wrapperEl) {
+  let startY = 0, pulling = false, currentPull = 0, refreshing = false;
+  const indicator = el('div', null, '\u2193 Pull to refresh');
+  indicator.style.cssText = 'position:absolute;top:-26px;left:0;right:0;text-align:center;font-size:11px;color:var(--text-faint);font-weight:700;opacity:0;pointer-events:none;';
+  wrapperEl.style.position = 'relative';
+  wrapperEl.insertBefore(indicator, wrapperEl.firstChild);
+  wrapperEl.addEventListener('touchstart', (e) => {
+    if (refreshing) return;
+    startY = e.touches[0].clientY;
+    pulling = true;
+    currentPull = 0;
+  }, { passive: true });
+  wrapperEl.addEventListener('touchmove', (e) => {
+    if (!pulling || refreshing) return;
+    currentPull = e.touches[0].clientY - startY;
+    if (currentPull > 8) {
+      indicator.style.opacity = String(Math.min(1, currentPull / 80));
+      indicator.textContent = currentPull > 80 ? '\u2191 Release to refresh' : '\u2193 Pull to refresh';
+    } else {
+      indicator.style.opacity = '0';
+    }
+  }, { passive: true });
+  wrapperEl.addEventListener('touchend', async () => {
+    if (!pulling || refreshing) { pulling = false; return; }
+    pulling = false;
+    if (currentPull > 80) {
+      refreshing = true;
+      indicator.style.opacity = '1';
+      indicator.textContent = 'Refreshing\u2026';
+      try {
+        const data = await fsGet();
+        if (data.players) players = data.players;
+        if (data.picks) allPicks = data.picks;
+        if (data.dailySlate) dailySlateData = data.dailySlate;
+        swipeStackInitialized = false;
+        poolSwipeStackInitialized = false;
+      } catch (e) { /* ignore transient refresh errors */ }
+      render();
+    } else {
+      indicator.style.opacity = '0';
+    }
+    currentPull = 0;
+  });
+}
 function renderSwipeMode(extraRows) {
   document.body.classList.add('no-scroll');
   document.documentElement.classList.add('no-scroll');
@@ -4589,6 +4637,7 @@ function renderSwipeMode(extraRows) {
 
   const stackWrap = el('div');
   stackWrap.style.cssText = 'flex:1;position:relative;margin-top:8px;min-height:0;';
+  attachPullToRefresh(stackWrap);
   if (!swipeStack.length) {
     const empty = el('div', 'empty', swipeCart.length ? 'All caught up — check your cart to confirm picks.' : 'Nothing to review right now.');
     empty.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;text-align:center;';
