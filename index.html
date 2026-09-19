@@ -390,10 +390,8 @@ let poolJoinTarget = null; // pool object currently being joined
 let poolSwipeStack = [];
 let poolSwipeCart = [];
 let poolSwipeStackInitialized = false;
-let poolSwipeDeclinedIds = new Set();
 let poolBrowseMode = 'swipe'; // 'swipe' | 'cart'
 let poolInvitesView = 'received'; // 'received' | 'sent'
-let dailyPoolFlipped = false;
 let dailyPoolSwipedAway = false; // session-only skip, since the daily pool isn't a record you can permanently decline
 let poolJoinedListOpen = {}; // poolId -> bool
 let poolLegsListOpen = {}; // poolId -> bool
@@ -752,10 +750,12 @@ function loadNavState() {
     if (nav.appSection) appSection = nav.appSection;
     if (nav.activeTab) activeTab = nav.activeTab;
     if (nav.existingChallengeView) existingChallengeView = nav.existingChallengeView;
+    if (nav.poolsActiveTab) poolsActiveTab = nav.poolsActiveTab;
+    if (nav.poolInvitesView) poolInvitesView = nav.poolInvitesView;
   } catch(e) {}
 }
 function saveNavState() {
-  try { localStorage.setItem('ww_nav', JSON.stringify({ appSection, activeTab, existingChallengeView })); } catch(e) {}
+  try { localStorage.setItem('ww_nav', JSON.stringify({ appSection, activeTab, existingChallengeView, poolsActiveTab, poolInvitesView })); } catch(e) {}
 }
 async function loadGlobalData() {
   try {
@@ -877,7 +877,9 @@ function renderMenu() {
     friendsBtn.onclick = () => { appSection = 'friends'; render(); };
     const badge = document.getElementById('friendReqBadge');
     const pendingCount = incomingFriendRequests().length;
+    const hasUnread = anyUnreadMessages();
     if (pendingCount > 0) { badge.style.display = 'flex'; badge.textContent = pendingCount > 9 ? '9+' : String(pendingCount); }
+    else if (hasUnread) { badge.style.display = 'flex'; badge.textContent = ''; badge.style.width = '9px'; badge.style.height = '9px'; badge.style.minWidth = '9px'; }
     else { badge.style.display = 'none'; }
   }
   const btn = document.getElementById('menuBtn');
@@ -949,18 +951,19 @@ function renderTabs() {
   const cartIds0 = cartChallengeIdsFor(profile.name);
   const invitesCount = allCh.filter(ch => ch.status === 'open' && !declinedIds0.has(ch.id) && !cartIds0.has(ch.id) && ((ch.visibility === 'public' && ch.creator !== profile.name) || pendingFriendChallengesForMe().some(p => p.id === ch.id))).length;
   const activeCount = allCh.filter(ch => ch.status === 'accepted' && (ch.creator === profile.name || ch.acceptedBy === profile.name) && settlePick(ch).status === 'pending').length;
-  const counts = { requested: invitesCount, active: activeCount };
-  [['games','Create'],['requested','Invites'],['active','Active'],['settled','Completed']].forEach(([id,label]) => {
+  const settledCount = allCh.filter(ch => (ch.creator === profile.name || ch.acceptedBy === profile.name) && (ch.status === 'declined' || (ch.status === 'accepted' && settlePick(ch).status !== 'pending'))).length;
+  const counts = { requested: invitesCount, active: activeCount, settled: settledCount };
+  [['games','Create'],['requested','Pending'],['active','Active'],['settled','Completed']].forEach(([id,label]) => {
     const count = counts[id];
-    const t = el('button', 'league-pill' + (activeTab === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
+    const t = el('button', 'league-pill' + (activeTab === id ? ' active' : ''), count === undefined ? label : `${label} (${count})`);
     t.style.position = 'relative';
     t.onclick = () => { activeTab = id; swipeStackInitialized = false; if (id === 'active' || id === 'settled') markAcceptedChallengesSeen(); render(); };
     if (id === 'requested' && unseenPendingFriendChallenges().length > 0) {
-      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
+      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--accent);border:1.5px solid var(--bg);';
       t.appendChild(dot);
     }
     if (id === 'active' && newlyAcceptedChallengesForMe().length > 0) {
-      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
+      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--accent);border:1.5px solid var(--bg);';
       t.appendChild(dot);
     }
     bar.appendChild(t);
@@ -1311,10 +1314,16 @@ function renderFriendsScreen() {
     const row = el('div');
     row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;cursor:pointer;';
     const left = el('div');
-    left.appendChild(el('div', 'who', grp.name));
+    const nameRow = el('div'); nameRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    nameRow.appendChild(el('div', 'who', grp.name));
+    if (threadHasUnread(grp.id)) {
+      const dot = el('span'); dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:var(--accent);flex-shrink:0;';
+      nameRow.appendChild(dot);
+    }
+    left.appendChild(nameRow);
     left.appendChild(el('div', 'detail', grp.members.map(m => m.name).join(', ')));
     row.appendChild(left);
-    row.onclick = (e) => { if (e.target.closest('button')) return; groupLeaderboardOpen[grp.id] = !groupLeaderboardOpen[grp.id]; render(); };
+    row.onclick = (e) => { if (e.target.closest('button')) return; groupLeaderboardOpen[grp.id] = !groupLeaderboardOpen[grp.id]; if (groupLeaderboardOpen[grp.id]) markThreadSeen(grp.id); render(); };
     if (grp.creatorUid === profile.uid) {
       const delBtn = el('button', null, '\u2715');
       delBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;width:28px;height:28px;font-size:12px;flex-shrink:0;';
@@ -1499,85 +1508,6 @@ function renderFriendsScreen() {
     };
   }
 
-  // ---- head-to-head matchups ----
-  if (myFriends.length) {
-    wrap.appendChild(el('div', 'week-header', `Head-to-Head (${myFriends.length})`));
-    myFriends.forEach(f => {
-      const pairKey = h2hTrackerId(profile.name, f.name);
-      const row = el('div', 'pick-row');
-      row.style.cursor = 'pointer';
-      const left = el('div');
-      left.appendChild(el('div', 'who', f.name));
-      const tracker = allPicks.find(p => p.poolType === 'h2hTracker' && p.id === pairKey);
-      const quickStats = computeH2HStats(profile.name, f.name, tracker ? tracker.resetAt : null);
-      const matchWins = (tracker && tracker.matchWins) || {};
-      left.appendChild(el('div', 'detail', `${Math.round(quickStats[profile.name].units)}u \u2013 ${Math.round(quickStats[f.name].units)}u (${matchWins[profile.name] || 0}-${matchWins[f.name] || 0})`));
-      row.appendChild(left);
-      row.onclick = () => { h2hSectionOpen[pairKey] = !h2hSectionOpen[pairKey]; render(); };
-      wrap.appendChild(row);
-      checkH2HThreshold(tracker, profile.name, f.name, quickStats).then(changed => { if (changed) render(); });
-
-      if (h2hSectionOpen[pairKey]) {
-        const h2hCard = el('div'); h2hCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin:-4px 0 8px;';
-        h2hCard.appendChild(el('div', null, 'Current matchup')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:6px;';
-        [profile.name, f.name].forEach(name => {
-          const s = quickStats[name];
-          const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;';
-          r.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${matchWins[name] || 0} match wins</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
-          h2hCard.appendChild(r);
-        });
-
-        h2hCard.appendChild(el('div', null, 'Match Winning-Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
-        const threshRow = el('div'); threshRow.style.cssText = 'display:flex;gap:6px;';
-        const threshInput = el('input'); threshInput.type = 'number'; threshInput.min = '1'; threshInput.step = '1'; threshInput.placeholder = 'No threshold';
-        threshInput.value = (tracker && tracker.winThreshold) ? tracker.winThreshold : '';
-        threshInput.style.cssText = 'flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box;';
-        const threshSaveBtn = el('button', null, 'Save');
-        threshSaveBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;';
-        threshSaveBtn.onclick = async () => {
-          const v = threshInput.value === '' ? null : Math.ceil(parseFloat(threshInput.value));
-          const idx = allPicks.findIndex(p => p.id === pairKey);
-          const nowIso = new Date().toISOString();
-          if (idx === -1) {
-            allPicks.push({ id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, matchWins: {}, winThreshold: v, timestamp: nowIso });
-          } else {
-            allPicks[idx].winThreshold = v;
-          }
-          try { await savePicks(allPicks); render(); }
-          catch (e) { alert("Couldn't save (" + describeFetchError(e) + ") — try again."); }
-        };
-        threshRow.appendChild(threshInput); threshRow.appendChild(threshSaveBtn);
-        h2hCard.appendChild(threshRow);
-        h2hCard.appendChild(el('div', 'setup-hint', 'When either of you reaches this many units, they automatically win the match and the score resets to 0.'));
-
-        const resetBtn = el('button', null, 'Reset Matchup Now');
-        resetBtn.style.cssText = 'width:100%;margin-top:10px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
-        resetBtn.onclick = async () => {
-          if (!confirm(`Reset your matchup with ${f.name}? Whoever's ahead right now gets credit for winning this match, then the score starts fresh.`)) return;
-          const idx = allPicks.findIndex(p => p.id === pairKey);
-          const nowIso = new Date().toISOString();
-          const leaderName = quickStats[profile.name].units > quickStats[f.name].units ? profile.name : (quickStats[f.name].units > quickStats[profile.name].units ? f.name : null);
-          if (idx === -1) {
-            const newMatchWins = leaderName ? { [leaderName]: 1 } : {};
-            const rec = { id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, matchWins: newMatchWins, winThreshold: null, timestamp: nowIso };
-            allPicks.push(rec);
-          } else {
-            const prevMatchWins = { ...(allPicks[idx].matchWins || {}) };
-            if (leaderName) allPicks[idx].matchWins = { ...prevMatchWins, [leaderName]: (prevMatchWins[leaderName] || 0) + 1 };
-            allPicks[idx].resetAt = nowIso;
-          }
-          try { await savePicks(allPicks); render(); }
-          catch (e) {
-            if (idx === -1) allPicks.pop(); else allPicks[idx].resetAt = tracker ? tracker.resetAt : null;
-            alert("Couldn't reset (" + describeFetchError(e) + ") — try again.");
-          }
-        };
-        h2hCard.appendChild(resetBtn);
-        wrap.appendChild(h2hCard);
-      }
-    });
-  }
-
   // ---- your friends list ----
   wrap.appendChild(el('div', 'week-header', `Your friends (${myFriends.length})`));
 
@@ -1643,7 +1573,13 @@ function renderFriendsScreen() {
       const row = el('div', 'pick-row');
       row.style.cursor = 'pointer';
       const left = el('div');
-      left.appendChild(el('div', 'who', f.name));
+      const nameRow = el('div'); nameRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+      nameRow.appendChild(el('div', 'who', f.name));
+      if (threadHasUnread(friendChatId(profile.name, f.name))) {
+        const dot = el('span'); dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:var(--accent);flex-shrink:0;';
+        nameRow.appendChild(dot);
+      }
+      left.appendChild(nameRow);
       left.appendChild(el('div', 'detail', '@' + f.username));
       row.appendChild(left);
       const rmBtn = el('button', null, '\u2715');
@@ -1658,7 +1594,7 @@ function renderFriendsScreen() {
           render();
         } catch (err) { alert("Couldn't remove (" + describeFetchError(err) + ") — try again."); }
       };
-      row.onclick = () => { friendProfileView = friendProfileView === f.uid ? null : f.uid; render(); };
+      row.onclick = () => { friendProfileView = friendProfileView === f.uid ? null : f.uid; if (friendProfileView === f.uid) markThreadSeen(friendChatId(profile.name, f.name)); render(); };
       row.appendChild(rmBtn);
       wrap.appendChild(row);
 
@@ -1667,6 +1603,71 @@ function renderFriendsScreen() {
         const detail = el('div', 'locked-note');
         detail.innerHTML = `<div class="ln-title">${full.name}</div>@${full.username}`;
         wrap.appendChild(detail);
+
+        const pairKey = h2hTrackerId(profile.name, f.name);
+        const tracker = allPicks.find(p => p.poolType === 'h2hTracker' && p.id === pairKey);
+        const quickStats = computeH2HStats(profile.name, f.name, tracker ? tracker.resetAt : null);
+        const matchWins = (tracker && tracker.matchWins) || {};
+        checkH2HThreshold(tracker, profile.name, f.name, quickStats).then(changed => { if (changed) render(); });
+
+        const h2hCard = el('div'); h2hCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin-top:8px;';
+        h2hCard.appendChild(el('div', null, 'Current matchup')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:6px;';
+        [profile.name, f.name].forEach(name => {
+          const s = quickStats[name];
+          const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;';
+          r.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${matchWins[name] || 0} match wins</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
+          h2hCard.appendChild(r);
+        });
+
+        h2hCard.appendChild(el('div', null, 'Match Winning-Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
+        const threshRow = el('div'); threshRow.style.cssText = 'display:flex;gap:6px;';
+        const threshInput = el('input'); threshInput.type = 'number'; threshInput.min = '1'; threshInput.step = '1'; threshInput.placeholder = 'No threshold';
+        threshInput.value = (tracker && tracker.winThreshold) ? tracker.winThreshold : '';
+        threshInput.style.cssText = 'flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box;';
+        const threshSaveBtn = el('button', null, 'Save');
+        threshSaveBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;';
+        threshSaveBtn.onclick = async () => {
+          const v = threshInput.value === '' ? null : Math.ceil(parseFloat(threshInput.value));
+          const idx = allPicks.findIndex(p => p.id === pairKey);
+          const nowIso = new Date().toISOString();
+          if (idx === -1) {
+            allPicks.push({ id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, matchWins: {}, winThreshold: v, timestamp: nowIso });
+          } else {
+            allPicks[idx].winThreshold = v;
+          }
+          try { await savePicks(allPicks); render(); }
+          catch (e) { alert("Couldn't save (" + describeFetchError(e) + ") — try again."); }
+        };
+        threshRow.appendChild(threshInput); threshRow.appendChild(threshSaveBtn);
+        h2hCard.appendChild(threshRow);
+        h2hCard.appendChild(el('div', 'setup-hint', 'When either of you reaches this many units, they automatically win the match and the score resets to 0.'));
+
+        const resetBtn = el('button', null, 'Reset Matchup Now');
+        resetBtn.style.cssText = 'width:100%;margin-top:10px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
+        resetBtn.onclick = async () => {
+          if (!confirm(`Reset your matchup with ${f.name}? Whoever's ahead right now gets credit for winning this match, then the score starts fresh.`)) return;
+          const idx = allPicks.findIndex(p => p.id === pairKey);
+          const nowIso = new Date().toISOString();
+          const leaderName = quickStats[profile.name].units > quickStats[f.name].units ? profile.name : (quickStats[f.name].units > quickStats[profile.name].units ? f.name : null);
+          if (idx === -1) {
+            const newMatchWins = leaderName ? { [leaderName]: 1 } : {};
+            const rec = { id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, matchWins: newMatchWins, winThreshold: null, timestamp: nowIso };
+            allPicks.push(rec);
+          } else {
+            const prevMatchWins = { ...(allPicks[idx].matchWins || {}) };
+            if (leaderName) allPicks[idx].matchWins = { ...prevMatchWins, [leaderName]: (prevMatchWins[leaderName] || 0) + 1 };
+            allPicks[idx].resetAt = nowIso;
+          }
+          try { await savePicks(allPicks); render(); }
+          catch (e) {
+            if (idx === -1) allPicks.pop(); else allPicks[idx].resetAt = tracker ? tracker.resetAt : null;
+            alert("Couldn't reset (" + describeFetchError(e) + ") — try again.");
+          }
+        };
+        h2hCard.appendChild(resetBtn);
+        wrap.appendChild(h2hCard);
+
+        wrap.appendChild(renderFriendCommentsSection(f));
       }
     });
   }
@@ -2175,6 +2176,7 @@ function renderDailyOptionCard(opt, remaining, fullSlate, usedMulligan) {
         await savePicks(allPicks);
         if (weeklyRemaining(profile.name, wk) === 0) {
           poolSwipeCart = poolSwipeCart.filter(p => !p.isDailyPool);
+          recordPoolSwipeCartRemove('__daily_house_pool__');
         }
       } catch (saveErr) {
         allPicks.pop();
@@ -2242,12 +2244,14 @@ function renderPoolTabs() {
   if (!profile) return;
   const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
   const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
-  const receivedCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && !poolSwipeDeclinedIds.has(p.id) && !poolSwipeCart.some(c => c.id === p.id) && (
+  const declinedIds0 = declinedPoolIdsFor(profile.name);
+  const cartIds0 = cartPoolIdsFor(profile.name);
+  const receivedCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && !declinedIds0.has(p.id) && !cartIds0.has(p.id) && (
     p.visibility === 'public' || (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
   )).length + (dailyPoolDone ? 0 : 1);
   const activeCount = allPools0.filter(p => p.status !== 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name))).length;
   const completedCount = allPools0.filter(p => p.status === 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name))).length + (dailyPoolDone ? 1 : 0);
-  [['create','Create'],['requested', receivedCount > 0 ? `Invites (${receivedCount})` : 'Invites'],['accepted', `Active (${activeCount})`],['settled', `Completed (${completedCount})`]].forEach(([id,label]) => {
+  [['create','Create'],['requested', `Pending (${receivedCount})`],['accepted', `Active (${activeCount})`],['settled', `Completed (${completedCount})`]].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (poolsActiveTab === id ? ' active' : ''), label);
     pill.onclick = () => { poolsActiveTab = id; poolBuilderOpen = false; render(); };
     bar.appendChild(pill);
@@ -2277,8 +2281,9 @@ function renderPoolsSection() {
   const completedPools = allPools.filter(p => p.status === 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name)));
 
   if (poolsActiveTab === 'requested') {
+    const sentPoolsCount = allPools.filter(p => p.creator === profile.name && p.status === 'open' && !(p.participants || []).some(pt => pt.name !== profile.name)).length;
     const toggle = el('div', 'league-scroller');
-    [['received','Received'],['sent','Sent']].forEach(([id,label]) => {
+    [['received', `Received (${receivedPools.length})`],['sent', `Sent (${sentPoolsCount})`]].forEach(([id,label]) => {
       const pill = el('button', 'league-pill' + (poolInvitesView === id ? ' active' : ''), label);
       pill.onclick = () => { poolInvitesView = id; poolSwipeStackInitialized = false; poolBrowseMode = 'swipe'; render(); };
       toggle.appendChild(pill);
@@ -2292,7 +2297,15 @@ function renderPoolsSection() {
     }
 
     if (!poolSwipeStackInitialized) {
-      poolSwipeStack = receivedPools.slice().sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)).filter(p => !poolSwipeDeclinedIds.has(p.id) && !poolSwipeCart.some(c => c.id === p.id));
+      const persistedCartPoolIds = cartPoolIdsFor(profile.name);
+      poolSwipeCart = allPools.filter(p => persistedCartPoolIds.has(p.id) && p.status === 'open');
+      if (persistedCartPoolIds.has('__daily_house_pool__')) {
+        poolSwipeCart.unshift({ id: '__daily_house_pool__', isDailyPool: true });
+        dailyPoolSwipedAway = true;
+      }
+      const declinedPoolIds = declinedPoolIdsFor(profile.name);
+      const cartIds = new Set(poolSwipeCart.map(c => c.id));
+      poolSwipeStack = receivedPools.slice().sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)).filter(p => !declinedPoolIds.has(p.id) && !cartIds.has(p.id));
       poolSwipeStackInitialized = true;
     }
     if (poolBrowseMode === 'cart') return renderPoolSwipeCart();
@@ -3521,8 +3534,7 @@ function renderPoolJoinForm(pool) {
       await savePicks(allPicks);
       poolJoinTarget = null; poolJoinSides = {}; poolJoinUnits = {};
       poolSwipeCart = poolSwipeCart.filter(p => p.id !== pool.id);
-      poolsActiveTab = 'accepted';
-      poolBrowseMode = 'swipe';
+      recordPoolSwipeCartRemove(pool.id);
       render();
     } catch (e) {
       allPicks[idx].participants.pop();
@@ -4129,6 +4141,28 @@ async function recordSwipeCartAdd(challengeId) {
   allPicks.push(rec);
   try { await savePicks(allPicks); } catch (e) { /* best-effort; a reload may lose this cart item if it fails */ }
 }
+function declinedPoolIdsFor(name) {
+  return new Set(allPicks.filter(p => p.poolType === 'poolSwipeSkip' && p.player === name).map(p => p.targetPoolId));
+}
+async function recordPoolSwipeSkip(poolId) {
+  const rec = { id: profile.name + '_poolskip_' + poolId, poolType: 'poolSwipeSkip', player: profile.name, targetPoolId: poolId, timestamp: new Date().toISOString() };
+  allPicks.push(rec);
+  try { await savePicks(allPicks); } catch (e) { /* best-effort; a reload may show it again if this fails */ }
+}
+function cartPoolIdsFor(name) {
+  return new Set(allPicks.filter(p => p.poolType === 'poolSwipeCartItem' && p.player === name).map(p => p.targetPoolId));
+}
+async function recordPoolSwipeCartAdd(poolId) {
+  const rec = { id: profile.name + '_poolcart_' + poolId, poolType: 'poolSwipeCartItem', player: profile.name, targetPoolId: poolId, timestamp: new Date().toISOString() };
+  allPicks.push(rec);
+  try { await savePicks(allPicks); } catch (e) { /* best-effort */ }
+}
+async function recordPoolSwipeCartRemove(poolId) {
+  const idx = allPicks.findIndex(p => p.poolType === 'poolSwipeCartItem' && p.player === profile.name && p.targetPoolId === poolId);
+  if (idx === -1) return;
+  const removed = allPicks.splice(idx, 1)[0];
+  try { await savePicks(allPicks); } catch (e) { allPicks.push(removed); }
+}
 async function recordSwipeCartRemove(challengeId) {
   const idx = allPicks.findIndex(p => p.poolType === 'swipeCartItem' && p.player === profile.name && p.challengeId === challengeId);
   if (idx === -1) return;
@@ -4177,73 +4211,51 @@ async function declineChallenge(ch) {
   catch (e) { allPicks[idx] = prev; allPicks.pop(); alert("Couldn't decline (" + describeFetchError(e) + ") — try again."); render(); }
 }
 
-let poolSwipeFlipped = {}; // pool.id -> bool
 function renderPoolSwipeCard(pool) {
   const cardWrap = el('div');
   cardWrap.style.cssText = 'position:relative;touch-action:pan-y;user-select:none;display:flex;flex-direction:column;';
   const card = el('div', 'swipe-card-big');
-  card.style.cssText = 'padding:14px 24px;cursor:pointer;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
+  card.style.cssText = 'padding:14px 24px;cursor:grab;border-radius:14px;background:#E3D2A6;border:1px solid #C9B482;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
   const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 ' + (pool.targetFriend || 'Individual'));
-  const flipped = !!poolSwipeFlipped[pool.id];
 
-  if (!flipped) {
-    const top = el('div');
-    top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:3px;">Pool \u00b7 from ${pool.creator}</div>`;
-    card.appendChild(top);
+  let earliestStart = null;
+  pool.legs.forEach(leg => {
+    const idx = gameIndex[leg.gameId];
+    if (idx && idx.game && idx.game.start) {
+      const d = new Date(idx.game.start);
+      if (!earliestStart || d < earliestStart) earliestStart = d;
+    }
+  });
+  const lockText = earliestStart ? earliestStart.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'Soon';
 
-    const nameId = 'poolswipe-name-' + pool.id.replace(/[^a-zA-Z0-9]/g, '');
-    const mid = el('div');
-    mid.style.cssText = 'text-align:center;margin:18px 0;';
-    mid.innerHTML = `<div id="${nameId}" style="font-size:20px;font-weight:900;color:#1a1a1a;white-space:nowrap;overflow:hidden;margin-bottom:8px;">${pool.name || pool.gameLabel}</div><div style="font-size:12px;color:#5a5342;font-weight:700;">${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 top ${pool.paidPositions} paid \u00b7 ${poolVisText}</div>`;
-    card.appendChild(mid);
-    setTimeout(() => { const el2 = document.getElementById(nameId); if (el2) shrinkTextToFit(el2, 14); }, 0);
+  const top = el('div');
+  top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:3px;">Pool \u00b7 from ${pool.creator}</div>`;
+  card.appendChild(top);
 
-    const bottom = el('div');
-    bottom.style.cssText = 'text-align:center;';
-    const legLines = pool.legs.slice(0,4).map(leg => {
-      const opts = poolLegSideOptions(leg);
-      let valueTxt = '';
-      if (opts) {
-        if (leg.betType === 'total') valueTxt = `Total ${opts[0].label}`;
-        else if (leg.betType === 'moneyline') valueTxt = 'ML';
-        else if (leg.betType === 'playerprop') valueTxt = `${leg.playerName} ${opts[0].label}`;
-        else { const fav = opts.find(o => o.label.startsWith('-')) || opts[0]; valueTxt = `${fav.team} ${fav.label}`; }
-      }
-      return `${leg.gameLabel}${valueTxt ? ' \u2014 ' + valueTxt : ''}`;
-    });
-    bottom.innerHTML = `
-      <div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;letter-spacing:0.03em;margin-bottom:3px;">Games in this pool</div>
-      <div style="font-size:12px;color:#3a3528;font-weight:600;line-height:1.5;">${legLines.join('<br>')}${pool.legs.length > 4 ? `<br>+${pool.legs.length - 4} more` : ''}</div>
-    `;
-    card.appendChild(bottom);
-    const tapNote = el('div', null, 'Tap for full details');
-    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:10px;';
-    card.appendChild(tapNote);
-  } else {
-    const top = el('div');
-    top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:8px;">${pool.name || pool.gameLabel} \u2014 Full Details</div>`;
-    card.appendChild(top);
-    const list = el('div');
-    list.style.cssText = 'font-size:12.5px;color:#3a3528;font-weight:600;line-height:1.8;text-align:left;overflow-y:auto;flex:1;min-height:0;';
-    list.innerHTML = pool.legs.map(leg => {
-      const opts = poolLegSideOptions(leg);
-      let valueTxt = '';
-      if (opts) {
-        if (leg.betType === 'total') valueTxt = `Total ${opts[0].label}`;
-        else if (leg.betType === 'moneyline') valueTxt = 'Moneyline';
-        else if (leg.betType === 'playerprop') valueTxt = `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} ${opts[0].label}`;
-        else valueTxt = opts.map(o => `${o.team} ${o.label}`).join(' vs ');
-      }
-      const idx = gameIndex[leg.gameId];
-      const awayFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.away) : leg.gameLabel.split(' @ ')[0];
-      const homeFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.home) : leg.gameLabel.split(' @ ')[1];
-      return `<div style="margin-bottom:8px;"><b>${awayFull} @ ${homeFull}</b><br><span style="color:#5a5342;">${valueTxt}</span></div>`;
-    }).join('');
-    card.appendChild(list);
-    const tapNote = el('div', null, 'Tap to flip back');
-    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:8px;flex-shrink:0;';
-    card.appendChild(tapNote);
-  }
+  const nameId = 'poolswipe-name-' + pool.id.replace(/[^a-zA-Z0-9]/g, '');
+  const mid = el('div');
+  mid.style.cssText = 'text-align:center;margin:14px 0;';
+  mid.innerHTML = `<div id="${nameId}" style="font-size:20px;font-weight:900;color:#1a1a1a;white-space:nowrap;overflow:hidden;margin-bottom:8px;">${pool.name || pool.gameLabel}</div><div style="font-size:12px;color:#5a5342;font-weight:700;">${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 top ${pool.paidPositions} paid \u00b7 ${poolVisText}</div><div style="font-size:11px;color:#8a8168;font-weight:700;margin-top:4px;">Locks ${lockText}</div>`;
+  card.appendChild(mid);
+  setTimeout(() => { const el2 = document.getElementById(nameId); if (el2) shrinkTextToFit(el2, 14); }, 0);
+
+  const list = el('div');
+  list.style.cssText = 'font-size:12px;color:#3a3528;font-weight:600;line-height:1.7;text-align:left;overflow-y:auto;flex:1;min-height:0;';
+  list.innerHTML = pool.legs.map(leg => {
+    const opts = poolLegSideOptions(leg);
+    let valueTxt = '';
+    if (opts) {
+      if (leg.betType === 'total') valueTxt = `Total ${opts[0].label}`;
+      else if (leg.betType === 'moneyline') valueTxt = 'Moneyline';
+      else if (leg.betType === 'playerprop') valueTxt = `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} ${opts[0].label}`;
+      else valueTxt = opts.map(o => `${o.team} ${o.label}`).join(' vs ');
+    }
+    const idx = gameIndex[leg.gameId];
+    const awayFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.away) : leg.gameLabel.split(' @ ')[0];
+    const homeFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.home) : leg.gameLabel.split(' @ ')[1];
+    return `<div style="margin-bottom:6px;"><b>${awayFull} @ ${homeFull}</b><br><span style="color:#5a5342;">${valueTxt}</span></div>`;
+  }).join('');
+  card.appendChild(list);
 
   const stampAccept = el('div', null, 'ADD');
   stampAccept.style.cssText = 'position:absolute;top:16px;left:16px;border:3px solid #2E7D32;color:#2E7D32;padding:3px 10px;font-weight:900;font-size:16px;border-radius:6px;transform:rotate(-15deg);opacity:0;pointer-events:none;';
@@ -4252,8 +4264,8 @@ function renderPoolSwipeCard(pool) {
   card.appendChild(stampAccept); card.appendChild(stampDecline);
   cardWrap.appendChild(card);
 
-  function doDecline() { poolSwipeStack.shift(); poolSwipeDeclinedIds.add(pool.id); render(); }
-  function doAccept() { poolSwipeCart.push(pool); poolSwipeStack.shift(); render(); }
+  function doDecline() { poolSwipeStack.shift(); recordPoolSwipeSkip(pool.id); render(); }
+  function doAccept() { poolSwipeCart.push(pool); poolSwipeStack.shift(); recordPoolSwipeCartAdd(pool.id); render(); }
   cardWrap._doAccept = doAccept;
   cardWrap._doDecline = doDecline;
 
@@ -4276,7 +4288,6 @@ function renderPoolSwipeCard(pool) {
     else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(doDecline, 150); }
     else {
       card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0;
-      if (!moved) { poolSwipeFlipped[pool.id] = !poolSwipeFlipped[pool.id]; render(); }
     }
     currentX = 0;
   }
@@ -4303,44 +4314,35 @@ function renderDailyPoolSwipeCard() {
   });
   const lockText = earliestStart ? earliestStart.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'Soon';
 
-  if (!dailyPoolFlipped) {
-    const top = el('div');
-    top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:3px;">Pool \u00b7 from House</div>`;
-    card.appendChild(top);
-    const mid = el('div');
-    mid.style.cssText = 'text-align:center;margin:22px 0;';
-    mid.innerHTML = `<div style="font-size:20px;font-weight:900;color:#1a1a1a;margin-bottom:10px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:12.5px;color:#5a5342;font-weight:700;line-height:1.6;">${slate.length} games \u00b7 ${leagues.join(', ')}<br>Locks ${lockText}</div>`;
-    card.appendChild(mid);
-    const tapNote = el('div', null, 'Tap for game details');
-    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;';
-    card.appendChild(tapNote);
-  } else {
-    const top = el('div');
-    top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:6px;">Today's Games</div>`;
-    card.appendChild(top);
-    const list = el('div');
-    list.style.cssText = 'font-size:12px;color:#3a3528;font-weight:600;line-height:1.7;text-align:left;';
-    list.innerHTML = slate.map(o => {
-      const g = (DATA[o.sport] || []).find(x => x.id === o.gameId);
-      let valueTxt = o.betType === 'total' ? 'Total' : 'Spread';
-      if (g) {
-        if (o.betType === 'total' && g.overUnder !== null && g.overUnder !== undefined) valueTxt = `Total ${g.overUnder}`;
-        else if (o.betType === 'spread') {
-          const spread = computeSpread(o.sport, g);
-          if (spread !== null) {
-            const favSide = spread <= 0 ? g.home : g.away;
-            const magnitude = Math.abs(spread);
-            valueTxt = `${favSide} ${magnitude === 0 ? 'PK' : '-' + magnitude}`;
-          }
+  const top = el('div');
+  top.innerHTML = `<div style="font-size:10.5px;color:#5a5342;text-transform:uppercase;font-weight:800;margin-bottom:3px;">Pool \u00b7 from House</div>`;
+  card.appendChild(top);
+  const mid = el('div');
+  mid.style.cssText = 'text-align:center;margin:14px 0;';
+  mid.innerHTML = `<div style="font-size:20px;font-weight:900;color:#1a1a1a;margin-bottom:8px;">\ud83c\udfe0 Daily House Pool</div><div style="font-size:12px;color:#5a5342;font-weight:700;">${slate.length} games \u00b7 ${leagues.join(', ')}</div><div style="font-size:11px;color:#8a8168;font-weight:700;margin-top:4px;">Locks ${lockText}</div>`;
+  card.appendChild(mid);
+  const list = el('div');
+  list.style.cssText = 'font-size:12px;color:#3a3528;font-weight:600;line-height:1.7;text-align:left;overflow-y:auto;flex:1;min-height:0;';
+  list.innerHTML = slate.map(o => {
+    const g = (DATA[o.sport] || []).find(x => x.id === o.gameId);
+    let valueTxt = o.betType === 'total' ? 'Total' : 'Spread';
+    if (g) {
+      if (o.betType === 'total' && g.overUnder !== null && g.overUnder !== undefined) valueTxt = `Total ${g.overUnder}`;
+      else if (o.betType === 'spread') {
+        const spread = computeSpread(o.sport, g);
+        if (spread !== null) {
+          const favSide = spread <= 0 ? g.home : g.away;
+          const magnitude = Math.abs(spread);
+          valueTxt = `${favSide} ${magnitude === 0 ? 'PK' : '-' + magnitude}`;
         }
       }
-      return `${o.gameLabel} \u2014 ${valueTxt}`;
-    }).join('<br>');
-    card.appendChild(list);
-    const tapNote = el('div', null, 'Tap to flip back');
-    tapNote.style.cssText = 'text-align:center;font-size:11px;color:#8a8168;font-weight:700;margin-top:12px;';
-    card.appendChild(tapNote);
-  }
+    }
+    const idx = gameIndex[o.gameId];
+    const awayFull = idx && idx.game ? fullTeamName(o.gameId, idx.game.away) : o.gameLabel.split(' @ ')[0];
+    const homeFull = idx && idx.game ? fullTeamName(o.gameId, idx.game.home) : o.gameLabel.split(' @ ')[1];
+    return `<div style="margin-bottom:6px;"><b>${awayFull} @ ${homeFull}</b><br><span style="color:#5a5342;">${valueTxt}</span></div>`;
+  }).join('');
+  card.appendChild(list);
 
   const stampAccept = el('div', null, 'ADD');
   stampAccept.style.cssText = 'position:absolute;top:16px;left:16px;border:3px solid #2E7D32;color:#2E7D32;padding:3px 10px;font-weight:900;font-size:16px;border-radius:6px;transform:rotate(-15deg);opacity:0;pointer-events:none;';
@@ -4350,7 +4352,7 @@ function renderDailyPoolSwipeCard() {
   cardWrap.appendChild(card);
 
   function doDecline() { dailyPoolSwipedAway = true; render(); }
-  function doAccept() { poolSwipeCart.unshift({ id: '__daily_house_pool__', isDailyPool: true }); dailyPoolSwipedAway = true; render(); }
+  function doAccept() { poolSwipeCart.unshift({ id: '__daily_house_pool__', isDailyPool: true }); dailyPoolSwipedAway = true; recordPoolSwipeCartAdd('__daily_house_pool__'); render(); }
   cardWrap._doAccept = doAccept;
   cardWrap._doDecline = doDecline;
 
@@ -4373,7 +4375,6 @@ function renderDailyPoolSwipeCard() {
     else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(doDecline, 150); }
     else {
       card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0;
-      if (!moved) { dailyPoolFlipped = !dailyPoolFlipped; render(); }
     }
     currentX = 0;
   }
@@ -4383,10 +4384,11 @@ function renderDailyPoolSwipeCard() {
 }
 function renderPoolSwipeMode(extraRows, showDailyFirst) {
   const wrap = el('div');
+  wrap.style.cssText = 'padding-bottom:56px;';
   (extraRows || []).forEach(row => { if (row) wrap.appendChild(row); });
 
   const stackWrap = el('div');
-  stackWrap.style.cssText = 'position:relative;height:calc(100vh - 340px);min-height:360px;margin-top:8px;';
+  stackWrap.style.cssText = 'position:relative;margin-top:8px;height:50vh;';
   const totalLeft = poolSwipeStack.length + (showDailyFirst ? 1 : 0);
   if (showDailyFirst) {
     const cardEl = renderDailyPoolSwipeCard();
@@ -4409,16 +4411,6 @@ function renderPoolSwipeMode(extraRows, showDailyFirst) {
   }
   wrap.appendChild(stackWrap);
 
-  const bottomBar = el('div');
-  bottomBar.style.cssText = `margin-top:10px;padding:10px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;`;
-  const countText = el('div', null, `${totalLeft} left to review`); countText.style.cssText = 'font-size:12px;color:var(--text-dim);';
-  bottomBar.appendChild(countText);
-  const reviewBtn = el('button', null, `Review Cart (${poolSwipeCart.length})`);
-  reviewBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 16px;font-size:13px;font-weight:800;';
-  reviewBtn.onclick = () => { poolBrowseMode = 'cart'; render(); };
-  bottomBar.appendChild(reviewBtn);
-  wrap.appendChild(bottomBar);
-
   if (showDailyFirst || poolSwipeStack.length) {
     const actionRow = el('div');
     actionRow.style.cssText = 'display:flex;gap:10px;margin-top:10px;';
@@ -4431,6 +4423,25 @@ function renderPoolSwipeMode(extraRows, showDailyFirst) {
     actionRow.appendChild(declineBtn); actionRow.appendChild(acceptBtn);
     wrap.appendChild(actionRow);
   }
+
+  const bottomBar = el('div');
+  bottomBar.style.cssText = `position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:15;`;
+  const countText = el('div', null, `${totalLeft} left to review`); countText.style.cssText = 'font-size:12px;color:var(--text-dim);';
+  bottomBar.appendChild(countText);
+  const reviewBtn = el('button', null, `Review Cart (${poolSwipeCart.length})`);
+  reviewBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 16px;font-size:13px;font-weight:800;';
+  reviewBtn.onclick = () => { poolBrowseMode = 'cart'; render(); };
+  bottomBar.appendChild(reviewBtn);
+  wrap.appendChild(bottomBar);
+
+  requestAnimationFrame(() => {
+    if (!stackWrap.isConnected) return;
+    const top = stackWrap.getBoundingClientRect().top;
+    const belowCard = wrap.getBoundingClientRect().bottom - stackWrap.getBoundingClientRect().bottom;
+    const available = window.innerHeight - top - belowCard - bottomBar.offsetHeight - 12;
+    stackWrap.style.height = Math.max(260, available) + 'px';
+  });
+
   return wrap;
 }
 function renderPoolSwipeCart() {
@@ -4452,7 +4463,7 @@ function renderPoolSwipeCart() {
       section.appendChild(renderDailyChallenge());
       const rmBtn = el('button', null, '\u2715 Remove from cart');
       rmBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
-      rmBtn.onclick = () => { poolSwipeCart = poolSwipeCart.filter(p => !p.isDailyPool); dailyPoolSwipedAway = false; render(); };
+      rmBtn.onclick = () => { poolSwipeCart = poolSwipeCart.filter(p => !p.isDailyPool); dailyPoolSwipedAway = false; recordPoolSwipeCartRemove('__daily_house_pool__'); render(); };
       section.appendChild(rmBtn);
       wrap.appendChild(section);
       return;
@@ -4460,7 +4471,7 @@ function renderPoolSwipeCart() {
     const cardEl = renderPoolCard(pool);
     const rmBtn = el('button', null, '\u2715 Remove from cart');
     rmBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
-    rmBtn.onclick = () => { poolSwipeCart = poolSwipeCart.filter(p => p.id !== pool.id); render(); };
+    rmBtn.onclick = () => { poolSwipeCart = poolSwipeCart.filter(p => p.id !== pool.id); recordPoolSwipeCartRemove(pool.id); render(); };
     cardEl.appendChild(rmBtn);
     wrap.appendChild(cardEl);
   });
@@ -4569,11 +4580,12 @@ function shrinkTextToFit(elm, minSize) {
 }
 function renderSwipeMode(extraRows) {
   const wrap = el('div');
+  wrap.style.cssText = 'padding-bottom:56px;';
 
   (extraRows || []).forEach(row => { if (row) { row.style.flexShrink = '0'; wrap.appendChild(row); } });
 
   const stackWrap = el('div');
-  stackWrap.style.cssText = 'position:relative;height:calc(100vh - 340px);min-height:360px;margin-top:8px;';
+  stackWrap.style.cssText = 'position:relative;height:50vh;margin-top:8px;';
   if (!swipeStack.length) {
     const empty = el('div', 'empty', swipeCart.length ? 'All caught up — check your cart to confirm picks.' : 'Nothing to review right now.');
     empty.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;text-align:center;';
@@ -4590,16 +4602,6 @@ function renderSwipeMode(extraRows) {
   }
   wrap.appendChild(stackWrap);
 
-  const bottomBar = el('div');
-  bottomBar.style.cssText = `margin-top:10px;padding:10px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;`;
-  const countText = el('div', null, `${swipeStack.length} left to review`); countText.style.cssText = 'font-size:12px;color:var(--text-dim);';
-  bottomBar.appendChild(countText);
-  const reviewBtn = el('button', null, `Review Cart (${swipeCart.length})`);
-  reviewBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 16px;font-size:13px;font-weight:800;';
-  reviewBtn.onclick = () => { challengeBrowseMode = 'cart'; render(); };
-  bottomBar.appendChild(reviewBtn);
-  wrap.appendChild(bottomBar);
-
   if (swipeStack.length) {
     const actionRow = el('div');
     actionRow.style.cssText = 'display:flex;gap:10px;margin-top:10px;';
@@ -4612,6 +4614,25 @@ function renderSwipeMode(extraRows) {
     actionRow.appendChild(declineBtn); actionRow.appendChild(acceptBtn);
     wrap.appendChild(actionRow);
   }
+
+  const bottomBar = el('div');
+  bottomBar.style.cssText = `position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:15;`;
+  const countText = el('div', null, `${swipeStack.length} left to review`); countText.style.cssText = 'font-size:12px;color:var(--text-dim);';
+  bottomBar.appendChild(countText);
+  const reviewBtn = el('button', null, `Review Cart (${swipeCart.length})`);
+  reviewBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 16px;font-size:13px;font-weight:800;';
+  reviewBtn.onclick = () => { challengeBrowseMode = 'cart'; render(); };
+  bottomBar.appendChild(reviewBtn);
+  wrap.appendChild(bottomBar);
+
+  requestAnimationFrame(() => {
+    if (!stackWrap.isConnected) return;
+    const top = stackWrap.getBoundingClientRect().top;
+    const belowCard = wrap.getBoundingClientRect().bottom - stackWrap.getBoundingClientRect().bottom;
+    const available = window.innerHeight - top - belowCard - bottomBar.offsetHeight - 12;
+    stackWrap.style.height = Math.max(260, available) + 'px';
+  });
+
   return wrap;
 }
 
@@ -4863,11 +4884,11 @@ function renderRequestedSection() {
   const toggle = el('div', 'league-scroller');
   [['friends','Received'],['mine','Sent']].forEach(([id,label]) => {
     const count = viewCounts[id];
-    const pill = el('button', 'league-pill' + (existingChallengeView === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
+    const pill = el('button', 'league-pill' + (existingChallengeView === id ? ' active' : ''), `${label} (${count})`);
     pill.style.position = 'relative';
     pill.onclick = () => { existingChallengeView = id; challengeBrowseMode = 'swipe'; swipeStackInitialized = false; if (id === 'friends') markFriendChallengesSeen(); render(); };
     if (id === 'friends' && unseenPendingFriendChallenges().length > 0) {
-      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
+      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--accent);border:1.5px solid var(--bg);';
       pill.appendChild(dot);
     }
     toggle.appendChild(pill);
@@ -5050,6 +5071,14 @@ function renderCompletedChallenges(mode) {
 
   // league filter chips
   if (mode !== 'active') {
+    const dateScroller = el('div', 'league-scroller');
+    [['today','Today'],['week','Week'],['month','Month'],['year','Year'],['all','All']].forEach(([id,label]) => {
+      const pill = el('button', 'league-pill' + (acceptedChallengeDateFilter === id ? ' active' : ''), label);
+      pill.onclick = () => { acceptedChallengeDateFilter = id; render(); };
+      dateScroller.appendChild(pill);
+    });
+    wrap.appendChild(dateScroller);
+
     const leaguesPresent = [...new Set(mine.map(ch => ch.sport).filter(Boolean))];
     if (leaguesPresent.length) {
       const scroller = el('div', 'league-scroller');
@@ -5064,14 +5093,6 @@ function renderCompletedChallenges(mode) {
       });
       wrap.appendChild(scroller);
     }
-
-    const dateScroller = el('div', 'league-scroller');
-    [['today','Today'],['week','Week'],['month','Month'],['year','Year'],['all','All']].forEach(([id,label]) => {
-      const pill = el('button', 'league-pill' + (acceptedChallengeDateFilter === id ? ' active' : ''), label);
-      pill.onclick = () => { acceptedChallengeDateFilter = id; render(); };
-      dateScroller.appendChild(pill);
-    });
-    wrap.appendChild(dateScroller);
   }
 
   const byLeague = (mode === 'active' || acceptedChallengeLeague === null) ? mine : mine.filter(ch => ch.sport === acceptedChallengeLeague);
@@ -5164,6 +5185,88 @@ function renderCompletedChallenges(mode) {
   return wrap;
 }
 
+function renderCommentRow(c) {
+  const row = el('div');
+  row.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:6px;';
+  const left = el('div'); left.style.cssText = 'min-width:0;flex:1;';
+  const dateStr = new Date(c.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  left.innerHTML = `<div style="font-size:11px;font-weight:700;color:var(--text);">${c.author} <span style="font-weight:500;color:var(--text-faint);">\u00b7 ${dateStr}</span></div><div style="font-size:12px;color:var(--text-dim);margin-top:2px;">${c.text}</div>`;
+  row.appendChild(left);
+  if (c.author === profile.name) {
+    const delBtn = el('button', null, '\u2715');
+    delBtn.style.cssText = 'background:none;border:none;color:var(--text-faint);font-size:11px;flex-shrink:0;padding:2px 4px;';
+    delBtn.onclick = async () => {
+      if (!confirm('Delete this comment?')) return;
+      const idx = allPicks.findIndex(p => p.id === c.id);
+      if (idx === -1) return;
+      const removed = allPicks.splice(idx, 1)[0];
+      try { await savePicks(allPicks); render(); }
+      catch (e) { allPicks.splice(idx, 0, removed); alert("Couldn't delete (" + describeFetchError(e) + ") — try again."); }
+    };
+    row.appendChild(delBtn);
+  }
+  return row;
+}
+function getLastSeenCommentTime(threadId) {
+  try { return localStorage.getItem('ww_seen_comment_' + threadId) || null; } catch(e) { return null; }
+}
+function markThreadSeen(threadId) {
+  try { localStorage.setItem('ww_seen_comment_' + threadId, new Date().toISOString()); } catch(e) {}
+}
+function threadHasUnread(threadId) {
+  const lastSeen = getLastSeenCommentTime(threadId);
+  const comments = allPicks.filter(p => p.poolType === 'comment' && p.poolId === threadId && p.author !== profile.name);
+  if (!comments.length) return false;
+  if (!lastSeen) return true;
+  return comments.some(c => new Date(c.timestamp) > new Date(lastSeen));
+}
+function anyUnreadMessages() {
+  if (!profile) return false;
+  const groupIds = allPicks.filter(p => p.poolType === 'friendGroup' && (p.members || []).some(m => m.uid === profile.uid)).map(p => p.id);
+  const friendChatIds = (profile.friends || []).map(f => friendChatId(profile.name, f.name));
+  return [...groupIds, ...friendChatIds].some(id => threadHasUnread(id));
+}
+function friendChatId(nameA, nameB) {
+  return 'friendchat_' + [nameA, nameB].sort().join('_vs_');
+}
+function renderFriendCommentsSection(f) {
+  const chatId = friendChatId(profile.name, f.name);
+  const wrap = el('div');
+  wrap.style.cssText = 'margin-top:10px;border-top:1px solid var(--border);padding-top:8px;';
+  wrap.appendChild(el('div', null, 'Messages')).style.cssText = 'font-size:11px;font-weight:700;color:var(--text-dim);margin-bottom:6px;';
+
+  const shown = allPicks.filter(p => p.poolType === 'comment' && p.poolId === chatId)
+    .slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+  if (!shown.length) { wrap.appendChild(el('div', 'empty', 'No messages yet.')); }
+  else { shown.forEach(c => { wrap.appendChild(renderCommentRow(c)); }); }
+
+  const postRow = el('div'); postRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
+  const input = el('input'); input.placeholder = `Message ${f.name}…`;
+  input.style.cssText = 'flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 8px;font-size:12px;box-sizing:border-box;';
+  postRow.appendChild(input);
+  const postBtn = el('button', null, 'Post');
+  postBtn.style.cssText = 'background:var(--accent-dark);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:7px 12px;font-size:12px;font-weight:700;flex-shrink:0;';
+  postRow.appendChild(postBtn);
+  wrap.appendChild(postRow);
+
+  postBtn.onclick = async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    postBtn.disabled = true; postBtn.textContent = 'Posting…';
+    const comment = { id: profile.name + '_comment_' + chatId + '_' + Date.now(), poolType: 'comment', poolId: chatId, author: profile.name, text, timestamp: new Date().toISOString() };
+    allPicks.push(comment);
+    try {
+      await savePicks(allPicks);
+      input.value = '';
+      render();
+    } catch (e) {
+      allPicks.pop();
+      postBtn.disabled = false; postBtn.textContent = 'Post';
+      alert("Couldn't post (" + describeFetchError(e) + ") — try again.");
+    }
+  };
+  return wrap;
+}
 function renderGroupCommentsSection(grp) {
   const isMember = (grp.members || []).some(m => m.uid === profile.uid);
   if (!isMember) return el('div');
@@ -5181,13 +5284,7 @@ function renderGroupCommentsSection(grp) {
     .slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
   if (!shown.length) { wrap.appendChild(el('div', 'empty', 'No messages yet.')); }
   else {
-    shown.forEach(c => {
-      const row = el('div');
-      row.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--border);';
-      const dateStr = new Date(c.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      row.innerHTML = `<div style="font-size:11px;font-weight:700;color:var(--text);">${c.author} <span style="font-weight:500;color:var(--text-faint);">\u00b7 ${dateStr}</span></div><div style="font-size:12px;color:var(--text-dim);margin-top:2px;">${c.text}</div>`;
-      wrap.appendChild(row);
-    });
+    shown.forEach(c => { wrap.appendChild(renderCommentRow(c)); });
   }
 
   const postRow = el('div'); postRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
@@ -5234,13 +5331,7 @@ function renderPoolCommentsSection(pool) {
     .slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
   if (!shown.length) { wrap.appendChild(el('div', 'empty', 'No comments yet.')); }
   else {
-    shown.forEach(c => {
-      const row = el('div');
-      row.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--border);';
-      const dateStr = new Date(c.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      row.innerHTML = `<div style="font-size:11px;font-weight:700;color:var(--text);">${c.author} <span style="font-weight:500;color:var(--text-faint);">\u00b7 ${dateStr}</span></div><div style="font-size:12px;color:var(--text-dim);margin-top:2px;">${c.text}</div>`;
-      wrap.appendChild(row);
-    });
+    shown.forEach(c => { wrap.appendChild(renderCommentRow(c)); });
   }
 
   const postRow = el('div'); postRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
@@ -5296,13 +5387,7 @@ function renderCommentsSection(g, sport) {
     .slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
   if (!shown.length) { wrap.appendChild(el('div', 'empty', 'No comments yet.')); }
   else {
-    shown.forEach(c => {
-      const row = el('div');
-      row.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--border);';
-      const dateStr = new Date(c.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      row.innerHTML = `<div style="font-size:11px;font-weight:700;color:var(--text);">${c.author} <span style="font-weight:500;color:var(--text-faint);">${c.visibility === 'friend' ? '\ud83d\udc64' : '\ud83d\udce2'} \u00b7 ${dateStr}</span></div><div style="font-size:12px;color:var(--text-dim);margin-top:2px;">${c.text}</div>`;
-      wrap.appendChild(row);
-    });
+    shown.forEach(c => { wrap.appendChild(renderCommentRow(c)); });
   }
 
   const postRow = el('div'); postRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
@@ -6688,9 +6773,7 @@ function renderLeaderboard() {
 (async function init() {
   loadProfile();
   loadSession();
-  appSection = 'pools';
-  activeTab = 'requested';
-  existingChallengeView = 'friends';
+  loadNavState();
   challengeBrowseMode = 'swipe';
   openChallengeLeague = null;
   openChallengeTypeFilter = 'all';
