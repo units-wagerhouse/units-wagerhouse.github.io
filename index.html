@@ -851,7 +851,7 @@ function renderInner() {
     document.getElementById('tabbar').innerHTML = '';
     main.appendChild(renderFriendsScreen());
   } else if (appSection === 'daily') {
-    document.getElementById('tabbar').innerHTML = '';
+    renderPoolTabs();
     main.appendChild(renderPoolsSection());
   } else if (appSection === 'kalshi') {
     document.getElementById('tabbar').innerHTML = '';
@@ -2136,12 +2136,12 @@ function renderHouseWeekHistory() {
 }
 
 let poolsActiveTab = 'requested'; // 'create' | 'requested' | 'accepted'
-function renderPoolsSection() {
-  const wrap = el('div');
-
-  const tabBar = el('div', 'league-scroller');
+function renderPoolTabs() {
+  const bar = document.getElementById('tabbar');
+  bar.innerHTML = '';
+  bar.className = 'league-scroller';
+  if (!profile) return;
   const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
-  const friendNames0 = new Set((profile.friends || []).map(f => f.name));
   const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
   const receivedCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && (
     p.visibility === 'public' || (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
@@ -2151,9 +2151,15 @@ function renderPoolsSection() {
   [['create','Create'],['requested', receivedCount > 0 ? `Invites (${receivedCount})` : 'Invites'],['accepted', `Active (${activeCount})`],['settled', `Completed (${completedCount})`]].forEach(([id,label]) => {
     const pill = el('button', 'league-pill' + (poolsActiveTab === id ? ' active' : ''), label);
     pill.onclick = () => { poolsActiveTab = id; poolBuilderOpen = false; render(); };
-    tabBar.appendChild(pill);
+    bar.appendChild(pill);
   });
-  wrap.appendChild(tabBar);
+}
+function renderPoolsSection() {
+  const wrap = el('div');
+
+  const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
+  const friendNames0 = new Set((profile.friends || []).map(f => f.name));
+  const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
 
   if (poolsActiveTab === 'create') {
     const cartBar = el('div'); cartBar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin:8px 0;';
