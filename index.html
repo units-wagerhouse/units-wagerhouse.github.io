@@ -2026,12 +2026,10 @@ function renderDailyOptionCard(opt, remaining, fullSlate, usedMulligan) {
 
   const confRow = el('div');
   confRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
-  const addBtn = el('button', null, '+ Add unit');
-  addBtn.style.cssText = 'flex:1;background:var(--accent-dark);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:11px;font-size:13px;font-weight:700;';
-  const removeBtn = el('button', null, '\u2715');
-  removeBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;width:38px;height:38px;font-size:14px;flex-shrink:0;';
-  confRow.appendChild(addBtn);
-  confRow.appendChild(removeBtn);
+  const minusBtn = el('button', null, '\u2212'); minusBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;width:32px;height:32px;font-size:14px;';
+  const unitsLabel = el('span', null, '0 units'); unitsLabel.style.cssText = 'font-size:12px;font-weight:700;min-width:56px;text-align:center;';
+  const plusBtn = el('button', null, '+'); plusBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;width:32px;height:32px;font-size:14px;';
+  confRow.appendChild(minusBtn); confRow.appendChild(unitsLabel); confRow.appendChild(plusBtn);
   slip.appendChild(confRow);
 
   const lockBtn = el('button', 'lock-btn', 'Pick a side first');
@@ -2044,14 +2042,14 @@ function renderDailyOptionCard(opt, remaining, fullSlate, usedMulligan) {
   function refreshConfidenceUI() {
     const u = weeklySelectedUnits[key];
     const hasSide = !!selectedSide[sideKey];
-    addBtn.textContent = u > 0 ? `${chipsFor(u)}  Add unit (${u}/${cap})` : '+ Add unit';
-    addBtn.disabled = u >= cap || !hasSide;
-    removeBtn.disabled = u <= 0;
+    unitsLabel.textContent = `${u} unit${u === 1 ? '' : 's'}`;
+    minusBtn.disabled = u <= 0;
+    plusBtn.disabled = u >= cap || !hasSide;
     lockBtn.disabled = u <= 0 || !hasSide;
-    lockBtn.textContent = !hasSide ? 'Pick a side first' : (u > 0 ? `Lock: ${chipsFor(u)}` : 'Pick a unit amount');
+    lockBtn.textContent = !hasSide ? 'Pick a side first' : (u > 0 ? `Lock In (${u}u)` : 'Pick a unit amount');
   }
-  addBtn.onclick = () => { if (weeklySelectedUnits[key] < cap) weeklySelectedUnits[key]++; refreshConfidenceUI(); };
-  removeBtn.onclick = () => { if (weeklySelectedUnits[key] > 0) weeklySelectedUnits[key]--; refreshConfidenceUI(); };
+  plusBtn.onclick = () => { if (weeklySelectedUnits[key] < cap) weeklySelectedUnits[key]++; refreshConfidenceUI(); };
+  minusBtn.onclick = () => { if (weeklySelectedUnits[key] > 0) weeklySelectedUnits[key]--; refreshConfidenceUI(); };
   refreshConfidenceUI();
 
   lockBtn.onclick = async () => {
