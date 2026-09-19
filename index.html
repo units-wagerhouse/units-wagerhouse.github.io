@@ -167,6 +167,23 @@
 
 <script>
 
+// Belt-and-suspenders fix for double-tap-to-zoom: some elements (like the swipe card) need
+// touch-action:pan-y for their own drag handling, which doesn't reliably suppress the browser's
+// native double-tap-zoom gesture the way touch-action:manipulation does. This catches two quick
+// taps on the same spot (the actual double-tap-to-zoom trigger) and blocks the zoom response,
+// without interfering with normal quick taps on two different buttons.
+(function() {
+  let lastTouchEnd = 0;
+  let lastTouchTarget = null;
+  document.addEventListener('touchend', function(e) {
+    const now = Date.now();
+    if (now - lastTouchEnd <= 350 && e.target === lastTouchTarget) {
+      e.preventDefault();
+    }
+    lastTouchEnd = now;
+    lastTouchTarget = e.target;
+  }, { passive: false });
+})();
 
 const LEAGUES_META = [
   { id: 'nfl', label: 'NFL', active: true, spreadSport: true },
@@ -905,7 +922,7 @@ function renderSectionSwitch() {
   const bar = document.getElementById('sectionSwitch');
   bar.innerHTML = '';
   if (!profile) return;
-  [['pools','Challenges'],['daily','Pools'],['kalshi','3rd Party']].forEach(([id,label]) => {
+  [['pools','Singles'],['daily','Pools'],['kalshi','3rd Party']].forEach(([id,label]) => {
     const t = el('div', 'tab' + (appSection === id ? ' active' : ''), label);
     t.onclick = () => { appSection = id; render(); };
     bar.appendChild(t);
@@ -915,17 +932,24 @@ function renderSectionSwitch() {
 function renderTabs() {
   const bar = document.getElementById('tabbar');
   bar.innerHTML = '';
+  bar.className = 'tabbar league-scroller';
   if (!profile) return;
+  const allCh = allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool');
+  const openCount = allCh.filter(ch => ch.status === 'open' && ch.visibility === 'public' && ch.creator !== profile.name).length;
+  const requestedCount = pendingFriendChallengesForMe().length;
+  const acceptedCount = allCh.filter(ch => ch.status === 'accepted' && (ch.creator === profile.name || ch.acceptedBy === profile.name)).length;
+  const counts = { existing: openCount, requested: requestedCount, completed: acceptedCount };
   [['existing','Open'],['games','Create'],['requested','Requested'],['completed','Accepted']].forEach(([id,label]) => {
-    const t = el('div', 'tab' + (activeTab === id ? ' active' : ''), label);
+    const count = counts[id];
+    const t = el('button', 'league-pill' + (activeTab === id ? ' active' : ''), count > 0 ? `${label} (${count})` : label);
     t.style.position = 'relative';
     t.onclick = () => { activeTab = id; swipeStackInitialized = false; if (id === 'completed') markAcceptedChallengesSeen(); render(); };
     if (id === 'requested' && unseenPendingFriendChallenges().length > 0) {
-      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-2px;right:6px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
+      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
       t.appendChild(dot);
     }
     if (id === 'completed' && newlyAcceptedChallengesForMe().length > 0) {
-      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-2px;right:6px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
+      const dot = el('span'); dot.style.cssText = 'position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:#3B82F6;border:1.5px solid var(--bg);';
       t.appendChild(dot);
     }
     bar.appendChild(t);
@@ -2817,7 +2841,7 @@ function renderKalshiSection() {
 function renderPoolBuilder() {
   const wrap = el('div', 'setup-card');
   wrap.appendChild(el('div', null, 'Build Your Own Pool')).style.cssText = 'font-size:14px;font-weight:800;margin-bottom:4px;';
-  wrap.appendChild(el('div', 'setup-hint', "Add as many games as you want and pick a bet type for each (no side \u2014 that's up to whoever joins). Everyone who joins pays the buy-in, gets the same house-unit budget to spread across their own picks on your games, and whoever ends up most positive wins the purse. Ties split evenly."));
+  wrap.appendChild(el('div', 'setup-hint', "Add at least 3 games and pick a bet type for each (no side \u2014 that's up to whoever joins). Everyone who joins gets the same unit budget to spread across their own picks on your games, and whoever ends up most positive wins."));
 
   wrap.appendChild(el('label', null, 'Pool Name (optional)'));
   const nameInput = el('input'); nameInput.placeholder = 'e.g. Sunday Slate'; nameInput.value = poolBuilderName;
@@ -3020,8 +3044,8 @@ function renderPoolBuilder() {
     render();
   };
 
-  if (poolBuilderLegs.length < 1) {
-    wrap.appendChild(el('div', 'setup-hint', 'Add as many games as you want to post a pool.'));
+  if (poolBuilderLegs.length < 3) {
+    wrap.appendChild(el('div', 'setup-hint', `Add at least 3 games to post a pool (${poolBuilderLegs.length}/3 so far).`));
     return wrap;
   }
 
