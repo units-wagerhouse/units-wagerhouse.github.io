@@ -17,8 +17,6 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-head); -webkit-font-smoothing: antialiased; overscroll-behavior-y: contain; overflow-x: hidden; width: 100%; touch-action: manipulation; }
   * { touch-action: manipulation; }
-  html.no-scroll { overflow: hidden; }
-  body.no-scroll { overflow: hidden; position: fixed; top: 0; left: 0; right: 0; height: 100%; width: 100%; }
   #app { min-height: 100vh; padding-bottom: 50px; }
   input, button { font-family: var(--font-head); }
 
@@ -146,7 +144,6 @@
   .stats-table td.pos { color: var(--accent); }
   .stats-table td.neg { color: var(--danger); }
   .refresh-note { margin: 16px 0 0; padding: 11px 13px; background: var(--surface); border-radius: 8px; font-size: 11px; color: var(--text-faint); line-height: 1.5; border-left: 2px solid var(--accent-dark); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-  @keyframes ptr-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -828,10 +825,6 @@ function render() {
 }
 function renderInner() {
   const scrollY = window.scrollY;
-  const staleBar = document.getElementById('swipeFixedBar');
-  if (staleBar) staleBar.remove();
-  document.body.classList.remove('no-scroll');
-  document.documentElement.classList.remove('no-scroll');
   renderMenu();
   renderSectionSwitch();
   const main = document.getElementById('main');
@@ -4389,17 +4382,11 @@ function renderDailyPoolSwipeCard() {
   return cardWrap;
 }
 function renderPoolSwipeMode(extraRows, showDailyFirst) {
-  document.body.classList.add('no-scroll');
-  document.documentElement.classList.add('no-scroll');
   const wrap = el('div');
-  const headerEl = document.querySelector('header.top');
-  const headerHeight = headerEl ? headerEl.offsetHeight : 0;
-  wrap.style.cssText = `position:fixed;top:${headerHeight}px;left:0;right:0;bottom:76px;display:flex;flex-direction:column;padding:4px 16px 10px;box-sizing:border-box;overflow:hidden;`;
   (extraRows || []).forEach(row => { if (row) wrap.appendChild(row); });
 
   const stackWrap = el('div');
-  stackWrap.style.cssText = 'flex:1;position:relative;margin-top:8px;min-height:0;';
-  attachPullToRefresh(stackWrap);
+  stackWrap.style.cssText = 'position:relative;height:calc(100vh - 340px);min-height:360px;margin-top:8px;';
   const totalLeft = poolSwipeStack.length + (showDailyFirst ? 1 : 0);
   if (showDailyFirst) {
     const cardEl = renderDailyPoolSwipeCard();
@@ -4422,15 +4409,15 @@ function renderPoolSwipeMode(extraRows, showDailyFirst) {
   }
   wrap.appendChild(stackWrap);
 
-  const bottomBar = el('div'); bottomBar.id = 'swipeFixedBar';
-  bottomBar.style.cssText = `position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:15;`;
+  const bottomBar = el('div');
+  bottomBar.style.cssText = `margin-top:10px;padding:10px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;`;
   const countText = el('div', null, `${totalLeft} left to review`); countText.style.cssText = 'font-size:12px;color:var(--text-dim);';
   bottomBar.appendChild(countText);
   const reviewBtn = el('button', null, `Review Cart (${poolSwipeCart.length})`);
   reviewBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 16px;font-size:13px;font-weight:800;';
   reviewBtn.onclick = () => { poolBrowseMode = 'cart'; render(); };
   bottomBar.appendChild(reviewBtn);
-  document.body.appendChild(bottomBar);
+  wrap.appendChild(bottomBar);
 
   if (showDailyFirst || poolSwipeStack.length) {
     const actionRow = el('div');
@@ -4447,8 +4434,6 @@ function renderPoolSwipeMode(extraRows, showDailyFirst) {
   return wrap;
 }
 function renderPoolSwipeCart() {
-  document.body.classList.remove('no-scroll');
-  document.documentElement.classList.remove('no-scroll');
   const wrap = el('div');
   const backBtn = el('button', null, '\u2190 Back to swiping');
   backBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);font-size:12px;font-weight:700;padding:8px 12px;border-radius:6px;margin-bottom:10px;';
@@ -4582,95 +4567,21 @@ function shrinkTextToFit(elm, minSize) {
     guard++;
   }
 }
-function attachPullToRefresh(wrapperEl) {
-  let startY = 0, pulling = false, currentPull = 0, refreshing = false;
-  const THRESHOLD = 70;
-
-  const spinnerWrap = el('div');
-  spinnerWrap.style.cssText = 'position:absolute;top:-40px;left:0;right:0;display:flex;justify-content:center;align-items:center;height:32px;opacity:0;pointer-events:none;';
-  const spinner = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  spinner.setAttribute('width', '22'); spinner.setAttribute('height', '22'); spinner.setAttribute('viewBox', '0 0 22 22');
-  spinner.style.cssText = 'transform:rotate(0deg);';
-  spinner.innerHTML = `<circle cx="11" cy="11" r="9" fill="none" stroke="var(--text-faint)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="42" stroke-dashoffset="10"></circle>`;
-  spinnerWrap.appendChild(spinner);
-
-  const content = el('div');
-  content.style.cssText = 'display:contents;';
-  wrapperEl.style.position = 'relative';
-  wrapperEl.insertBefore(spinnerWrap, wrapperEl.firstChild);
-
-  // Everything except the spinner wrap gets translated together as "the content" during a pull.
-  const contentEls = () => Array.from(wrapperEl.children).filter(c => c !== spinnerWrap);
-
-  function setPullVisual(dist) {
-    const clamped = Math.max(0, Math.min(dist, THRESHOLD * 1.6));
-    spinnerWrap.style.opacity = String(Math.min(1, clamped / THRESHOLD));
-    spinnerWrap.style.transform = `translateY(${clamped}px)`;
-    spinner.style.transform = `rotate(${clamped * 3}deg)`;
-    contentEls().forEach(c => { c.style.transform = `translateY(${clamped}px)`; c.style.transition = 'none'; });
-  }
-  function resetPullVisual(animate) {
-    contentEls().forEach(c => { c.style.transition = animate ? 'transform 0.2s ease' : 'none'; c.style.transform = 'translateY(0)'; });
-    spinnerWrap.style.transition = animate ? 'opacity 0.2s ease, transform 0.2s ease' : 'none';
-    spinnerWrap.style.opacity = '0';
-    spinnerWrap.style.transform = 'translateY(0)';
-  }
-
-  wrapperEl.addEventListener('touchstart', (e) => {
-    if (refreshing) return;
-    startY = e.touches[0].clientY;
-    pulling = true;
-    currentPull = 0;
-  }, { passive: true });
-  wrapperEl.addEventListener('touchmove', (e) => {
-    if (!pulling || refreshing) return;
-    currentPull = e.touches[0].clientY - startY;
-    if (currentPull > 0) setPullVisual(currentPull);
-  }, { passive: true });
-  wrapperEl.addEventListener('touchend', async () => {
-    if (!pulling || refreshing) { pulling = false; return; }
-    pulling = false;
-    if (currentPull > THRESHOLD) {
-      refreshing = true;
-      spinnerWrap.style.opacity = '1';
-      spinnerWrap.style.transform = `translateY(${THRESHOLD}px)`;
-      contentEls().forEach(c => { c.style.transition = 'transform 0.15s ease'; c.style.transform = `translateY(${THRESHOLD}px)`; });
-      spinner.style.animation = 'ptr-spin 0.7s linear infinite';
-      try {
-        const data = await fsGet();
-        if (data.players) players = data.players;
-        if (data.picks) allPicks = data.picks;
-        if (data.dailySlate) dailySlateData = data.dailySlate;
-        swipeStackInitialized = false;
-        poolSwipeStackInitialized = false;
-      } catch (e) { /* ignore transient refresh errors */ }
-      render();
-    } else {
-      resetPullVisual(true);
-    }
-    currentPull = 0;
-  });
-}
 function renderSwipeMode(extraRows) {
-  document.body.classList.add('no-scroll');
-  document.documentElement.classList.add('no-scroll');
   const wrap = el('div');
-  const headerEl = document.querySelector('header.top');
-  const headerHeight = headerEl ? Math.ceil(headerEl.getBoundingClientRect().height) : 110;
-  wrap.style.cssText = `position:fixed;top:${headerHeight}px;left:0;right:0;bottom:76px;display:flex;flex-direction:column;padding:4px 16px 10px;box-sizing:border-box;overflow:hidden;`;
 
   (extraRows || []).forEach(row => { if (row) { row.style.flexShrink = '0'; wrap.appendChild(row); } });
 
   const stackWrap = el('div');
-  stackWrap.style.cssText = 'flex:1;position:relative;margin-top:8px;min-height:0;';
-  attachPullToRefresh(stackWrap);
+  stackWrap.style.cssText = 'position:relative;height:calc(100vh - 340px);min-height:360px;margin-top:8px;';
   if (!swipeStack.length) {
     const empty = el('div', 'empty', swipeCart.length ? 'All caught up — check your cart to confirm picks.' : 'Nothing to review right now.');
     empty.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;text-align:center;';
     stackWrap.appendChild(empty);
   } else {
     const cardEl = renderSwipeCard(swipeStack[0]);
-    cardEl.style.height = '100%';
+    cardEl.style.position = 'absolute';
+    cardEl.style.top = '0'; cardEl.style.left = '0'; cardEl.style.right = '0'; cardEl.style.bottom = '0';
     cardEl.style.display = 'flex';
     stackWrap.appendChild(cardEl);
     requestAnimationFrame(() => {
@@ -4679,15 +4590,15 @@ function renderSwipeMode(extraRows) {
   }
   wrap.appendChild(stackWrap);
 
-  const bottomBar = el('div'); bottomBar.id = 'swipeFixedBar';
-  bottomBar.style.cssText = `position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:15;`;
+  const bottomBar = el('div');
+  bottomBar.style.cssText = `margin-top:10px;padding:10px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;`;
   const countText = el('div', null, `${swipeStack.length} left to review`); countText.style.cssText = 'font-size:12px;color:var(--text-dim);';
   bottomBar.appendChild(countText);
   const reviewBtn = el('button', null, `Review Cart (${swipeCart.length})`);
   reviewBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 16px;font-size:13px;font-weight:800;';
   reviewBtn.onclick = () => { challengeBrowseMode = 'cart'; render(); };
   bottomBar.appendChild(reviewBtn);
-  document.body.appendChild(bottomBar);
+  wrap.appendChild(bottomBar);
 
   if (swipeStack.length) {
     const actionRow = el('div');
