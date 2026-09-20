@@ -54,7 +54,7 @@
   .league-pill.offered.outline-only.active { background: var(--accent); border-color: #4CAF50; color: var(--accent-text); }
   .league-pill.off { opacity: 0.5; }
 
-  main { padding: 4px 16px 8px; }
+  main { padding: 0 16px 8px; }
 
   .offseason-card { text-align: center; padding: 50px 20px; color: var(--text-dim); }
   .offseason-card .big { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
@@ -396,6 +396,7 @@ let poolSwipeStackInitialized = false;
 let poolBrowseMode = 'swipe'; // 'swipe' | 'cart'
 let poolInvitesView = 'received'; // 'received' | 'sent'
 let golfPoolMode = 'h2h'; // 'h2h' | 'team'
+let poolCreateSport = 'multi'; // 'multi' | 'pga'
 let golfTeamBuilderStep = 1; // 1-4 while assigning tiers, 5 = review/create
 let golfTeamBuilderTiers = [[], [], [], [], []]; // player names per tier, tier 5 auto-fills
 let golfTeamBuilderName = '';
@@ -2303,6 +2304,33 @@ function renderPoolsSection() {
   const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
 
   if (poolsActiveTab === 'create') {
+    const sportToggle = el('div', 'league-scroller');
+    [['multi','Multi-Sport'],['pga','PGA Golf']].forEach(([id,label]) => {
+      const pill = el('button', 'league-pill' + (poolCreateSport === id ? ' active' : ''), label);
+      pill.onclick = () => { poolCreateSport = id; render(); };
+      sportToggle.appendChild(pill);
+    });
+    wrap.appendChild(sportToggle);
+
+    if (poolCreateSport === 'pga') {
+      if (!golfFieldCache) {
+        if (!golfFieldAttempted) {
+          wrap.appendChild(el('div', 'empty', 'Loading tournament field…'));
+          fetchGolfField(false).then(() => render());
+          return wrap;
+        }
+        wrap.appendChild(el('div', 'empty', 'No active PGA tournament field found right now — check back closer to a tournament.'));
+        return wrap;
+      }
+      const field = golfFieldCache;
+      if (!field || !field.players.length) {
+        wrap.appendChild(el('div', 'empty', 'No active PGA tournament field found right now — check back closer to a tournament.'));
+        return wrap;
+      }
+      wrap.appendChild(renderGolfTeamPoolBuilder(field));
+      return wrap;
+    }
+
     const cartBar = el('div'); cartBar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin:8px 0;';
     cartBar.appendChild(el('div', null, `${poolBuilderLegs.length} game${poolBuilderLegs.length === 1 ? '' : 's'} in cart`)).style.cssText = 'font-size:12px;color:var(--text-dim);font-weight:700;';
     wrap.appendChild(cartBar);
@@ -3974,6 +4002,7 @@ function renderGolfTeamPoolBuilder(field) {
       await savePicks(allPicks);
       golfTeamBuilderStep = 1; golfTeamBuilderTiers = [[], [], [], [], []]; golfTeamBuilderName = ''; golfTeamBuilderVisibility = 'public'; golfTeamBuilderPaid = 1;
       golfPoolMode = 'h2h';
+      poolCreateSport = 'multi';
       poolsActiveTab = 'accepted';
       render();
     } catch (e) {
