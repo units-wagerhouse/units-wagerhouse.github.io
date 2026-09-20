@@ -6925,11 +6925,21 @@ async function cleanupAcceptedChallengesOnce() {
   try { localStorage.setItem(FLAG, '1'); } catch (e) {}
 }
 async function clearChallengesPoolsAndUnitsOnce() {
-  const FLAG = 'ww_clear_challenges_pools_units_v2';
+  const FLAG = 'ww_clear_challenges_pools_units_v3';
   try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
-  const before = allPicks.length;
+  const before = JSON.stringify(allPicks);
   allPicks = allPicks.filter(p => p.poolType !== 'challenge' && p.poolType !== 'accountTx');
-  if (allPicks.length !== before) {
+  const nowIso = new Date().toISOString();
+  allPicks.forEach(p => {
+    if (p.poolType === 'friendGroup') {
+      p.matchWins = {};
+      p.leaderboardPeriodStart = nowIso;
+    } else if (p.poolType === 'h2hTracker') {
+      p.matchWins = {};
+      p.resetAt = nowIso;
+    }
+  });
+  if (JSON.stringify(allPicks) !== before) {
     try { await savePicks(allPicks); } catch (e) { return; /* retry next load if save failed */ }
   }
   try { localStorage.setItem(FLAG, '1'); } catch (e) {}
