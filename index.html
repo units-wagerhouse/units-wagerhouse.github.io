@@ -1220,6 +1220,7 @@ let groupBuilderMemberUids = new Set();
 let groupLeaderboardOpen = {}; // groupId -> bool
 let groupInviteOpen = {}; // groupId -> bool
 let h2hSectionOpen = {}; // pairKey -> bool
+let matchupHistoryOpen = {}; // pairKey_name -> bool
 let autoMatchNotice = null; // { creator, isFriend } | null
 let friendsAllProfilesLoaded = false;
 let friendProfileView = null; // uid of a friend whose profile card is expanded
@@ -1411,7 +1412,7 @@ function renderFriendsScreen() {
       });
       checkGroupThreshold(grp, stats).then(changed => { if (changed) render(); });
 
-      lbCard.appendChild(el('div', null, 'Match Winning-Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
+      lbCard.appendChild(el('div', null, 'Match-Winning Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
       const gThreshRow = el('div'); gThreshRow.style.cssText = 'display:flex;gap:6px;';
       const gThreshInput = el('input'); gThreshInput.type = 'number'; gThreshInput.min = '1'; gThreshInput.step = '1'; gThreshInput.placeholder = 'No threshold';
       gThreshInput.value = grp.winThreshold || '';
@@ -1622,14 +1623,32 @@ function renderFriendsScreen() {
 
         const h2hCard = el('div'); h2hCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin-top:8px;';
         h2hCard.appendChild(el('div', null, 'Current matchup')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:6px;';
+        const h2hHistory = computeH2HHistory(profile.name, f.name, tracker ? tracker.resetAt : null);
         [profile.name, f.name].forEach(name => {
           const s = quickStats[name];
-          const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;';
-          r.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${matchWins[name] || 0} match wins</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
+          const historyKey = pairKey + '_' + name;
+          const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;cursor:pointer;';
+          r.innerHTML = `<span>${matchupHistoryOpen[historyKey] ? '\u25be' : '\u25b8'} ${name}${name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${matchWins[name] || 0} match wins</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
+          r.onclick = () => { matchupHistoryOpen[historyKey] = !matchupHistoryOpen[historyKey]; render(); };
           h2hCard.appendChild(r);
+          if (matchupHistoryOpen[historyKey]) {
+            const histWrap = el('div'); histWrap.style.cssText = 'padding:4px 0 6px 14px;';
+            if (!h2hHistory.length) { histWrap.appendChild(el('div', 'empty', 'No games yet this matchup.')); }
+            else {
+              h2hHistory.forEach(entry => {
+                const val = entry.results[name];
+                if (val === undefined) return;
+                const dateStr = new Date(entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const row = el('div'); row.style.cssText = 'display:flex;justify-content:space-between;font-size:11px;padding:3px 0;color:var(--text-dim);';
+                row.innerHTML = `<span>${entry.label} <span style="color:var(--text-faint);">\u00b7 ${dateStr}</span></span><span style="font-weight:700;color:${val > 0 ? 'var(--accent)' : (val < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${val > 0 ? '+' : ''}${Math.round(val)}u</span>`;
+                histWrap.appendChild(row);
+              });
+            }
+            h2hCard.appendChild(histWrap);
+          }
         });
 
-        h2hCard.appendChild(el('div', null, 'Match Winning-Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
+        h2hCard.appendChild(el('div', null, 'Match-Winning Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
         const threshRow = el('div'); threshRow.style.cssText = 'display:flex;gap:6px;';
         const threshInput = el('input'); threshInput.type = 'number'; threshInput.min = '1'; threshInput.step = '1'; threshInput.placeholder = 'No threshold';
         threshInput.value = (tracker && tracker.winThreshold) ? tracker.winThreshold : '';
@@ -1675,9 +1694,8 @@ function renderFriendsScreen() {
           }
         };
         h2hCard.appendChild(resetBtn);
+        h2hCard.appendChild(renderFriendCommentsSection(f));
         wrap.appendChild(h2hCard);
-
-        wrap.appendChild(renderFriendCommentsSection(f));
       }
     });
   }
@@ -2305,14 +2323,17 @@ function renderPoolsSection() {
 
   if (poolsActiveTab === 'create') {
     const sportToggle = el('div', 'league-scroller');
-    [['multi','Multi-Sport'],['pga','PGA Golf']].forEach(([id,label]) => {
-      const pill = el('button', 'league-pill' + (poolCreateSport === id ? ' active' : ''), label);
-      pill.onclick = () => { poolCreateSport = id; render(); };
+    const activeLeagues = LEAGUES_META.filter(l => l.active);
+    if (!activeLeagues.some(l => l.id === poolCreateSport)) poolCreateSport = (activeLeagues[0] || {}).id || 'nfl';
+    activeLeagues.forEach(lg => {
+      const pill = el('button', 'league-pill' + (poolCreateSport === lg.id ? ' active' : ''), lg.label);
+      pill.onclick = () => { poolCreateSport = lg.id; if (!lg.isGolf) { poolLegDraft.league = lg.id; poolLegDraft.gameId = ''; poolLegDraft.betType = ''; } render(); };
       sportToggle.appendChild(pill);
     });
     wrap.appendChild(sportToggle);
 
-    if (poolCreateSport === 'pga') {
+    const golfMeta = LEAGUES_META.find(l => l.isGolf);
+    if (golfMeta && poolCreateSport === golfMeta.id) {
       if (!golfFieldCache) {
         if (!golfFieldAttempted) {
           wrap.appendChild(el('div', 'empty', 'Loading tournament field…'));
@@ -3152,12 +3173,6 @@ function renderPoolBuilder() {
 
   const addCard = el('div');
   addCard.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
-  addCard.appendChild(el('label', null, 'League'));
-  const leagueSel = el('select');
-  leagueSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
-  LEAGUES_META.filter(l => l.active && !l.isGolf).forEach(lg => { const o = document.createElement('option'); o.value = lg.id; o.textContent = lg.label; leagueSel.appendChild(o); });
-  if (poolLegDraft.league) leagueSel.value = poolLegDraft.league;
-  addCard.appendChild(leagueSel);
 
   addCard.appendChild(el('label', null, 'Game'));
   const gameSel = el('select');
@@ -3185,7 +3200,7 @@ function renderPoolBuilder() {
   addCard.appendChild(propFieldsWrap);
 
   function rebuildGameOptions() {
-    const sport = leagueSel.value;
+    const sport = poolCreateSport;
     gameSel.innerHTML = '';
     const todayKey = houseDayKey(new Date());
     const moneylineOnly = !!(LEAGUES_META.find(l => l.id === sport) || {}).moneylineOnly;
@@ -3208,11 +3223,11 @@ function renderPoolBuilder() {
   }
   function fullTeamName2(sport, g, abbr) { return (g.teams && g.teams[abbr] && g.teams[abbr].name) || abbr; }
   function currentGame() {
-    const sport = leagueSel.value;
+    const sport = poolCreateSport;
     return (DATA[sport] || []).find(g => g.id === gameSel.value);
   }
   function rebuildMarketOptions() {
-    const sport = leagueSel.value;
+    const sport = poolCreateSport;
     const g = currentGame();
     marketSel.innerHTML = '';
     if (!g) return;
@@ -3227,7 +3242,7 @@ function renderPoolBuilder() {
     updatePropFieldsVisibility();
   }
   function updatePropFieldsVisibility() {
-    const sport = leagueSel.value;
+    const sport = poolCreateSport;
     const g = currentGame();
     if (marketSel.value !== 'playerprop' || !g) { propFieldsWrap.style.display = 'none'; return; }
     propFieldsWrap.style.display = 'block';
@@ -3248,13 +3263,12 @@ function renderPoolBuilder() {
       if (poolLegDraft.propName && [...propNameSel.options].some(o => o.value === poolLegDraft.propName)) propNameSel.value = poolLegDraft.propName;
     });
   }
-  leagueSel.onchange = () => { poolLegDraft.league = leagueSel.value; poolLegDraft.gameId = ''; poolLegDraft.betType = ''; rebuildGameOptions(); };
   gameSel.onchange = () => { poolLegDraft.gameId = gameSel.value; poolLegDraft.betType = ''; rebuildMarketOptions(); };
   marketSel.onchange = () => { poolLegDraft.betType = marketSel.value; updatePropFieldsVisibility(); };
   propCatSel.onchange = () => { poolLegDraft.propCat = propCatSel.value; };
   propNameSel.onchange = () => { poolLegDraft.propName = propNameSel.value; };
   propLineInput.oninput = () => { poolLegDraft.propLine = propLineInput.value; };
-  if (!poolLegDraft.league) poolLegDraft.league = leagueSel.value;
+  poolLegDraft.league = poolCreateSport;
   rebuildGameOptions();
 
   const addLegBtn = el('button', null, '+ Add to Pool');
@@ -3265,7 +3279,7 @@ function renderPoolBuilder() {
   wrap.appendChild(addCard);
 
   addLegBtn.onclick = () => {
-    const sport = leagueSel.value;
+    const sport = poolCreateSport;
     const g = currentGame();
     addErr.textContent = '';
     if (!g) { addErr.textContent = 'No game selected.'; return; }
@@ -3873,6 +3887,7 @@ function assignedGolfPlayerNames() {
 }
 function renderGolfTeamPoolBuilder(field) {
   const wrap = el('div');
+  if (!golfRankAttempted) { fetchGolfRankings().then(() => render()); }
 
   if (golfTeamBuilderStep <= 4) {
     const tierNum = golfTeamBuilderStep;
@@ -3886,11 +3901,12 @@ function renderGolfTeamPoolBuilder(field) {
     } else {
       const listWrap = el('div');
       listWrap.style.cssText = 'max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px;';
-      remaining.slice().sort((a,b) => a.name.localeCompare(b.name)).forEach(p => {
+      golfPlayersSortedByRank(remaining).forEach(p => {
+        const rank = golfRankMap ? golfRankMap[p.name.toLowerCase()] : undefined;
         const selected = golfTeamBuilderTiers[tierNum-1].includes(p.name);
         const row = el('div', 'pick-row');
         row.style.cssText = 'margin-top:4px;cursor:pointer;' + (selected ? 'border-color:var(--accent);' : '');
-        row.innerHTML = `<div class="who">${p.name}</div>`;
+        row.innerHTML = `<div class="who">${rank ? `#${rank} ` : ''}${p.name}</div>`;
         const check = el('div', null, selected ? '\u2713' : '');
         check.style.cssText = 'color:var(--accent);font-weight:900;font-size:16px;';
         row.appendChild(check);
@@ -5506,6 +5522,44 @@ function computeH2HStats(nameA, nameB, resetAt) {
   });
   return stats;
 }
+function computeH2HHistory(nameA, nameB, resetAt) {
+  const periodStart = new Date(resetAt || '1970-01-01T00:00:00.000Z');
+  const entries = [];
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.propType !== 'golf_team' && p.status === 'accepted' && new Date(p.timestamp) >= periodStart &&
+    ((p.creator === nameA && p.acceptedBy === nameB) || (p.creator === nameB && p.acceptedBy === nameA))
+  ).forEach(ch => {
+    const profitCreator = computeChallengeProfit(ch, true);
+    const profitAcceptor = computeChallengeProfit(ch, false);
+    if (profitCreator === null || profitAcceptor === null) return;
+    entries.push({
+      date: ch.timestamp, label: challengeMarketTxt(ch),
+      results: { [ch.creator]: profitCreator, [ch.acceptedBy]: profitAcceptor }
+    });
+  });
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool' && p.status === 'settled' && new Date(p.timestamp) >= periodStart &&
+    (p.participants || []).some(pt => pt.name === nameA) && (p.participants || []).some(pt => pt.name === nameB)
+  ).forEach(pool => {
+    const scoreA = poolParticipantScore(pool, pool.participants.find(pt => pt.name === nameA)).total;
+    const scoreB = poolParticipantScore(pool, pool.participants.find(pt => pt.name === nameB)).total;
+    entries.push({
+      date: pool.timestamp, label: `Pool \u2014 ${pool.name || pool.gameLabel}`,
+      results: { [nameA]: scoreA, [nameB]: scoreB }
+    });
+  });
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'golf_team' && p.status === 'settled' && new Date(p.timestamp) >= periodStart &&
+    (p.participants || []).some(pt => pt.name === nameA) && (p.participants || []).some(pt => pt.name === nameB)
+  ).forEach(pool => {
+    const scoreA = computeGolfTeamParticipantScore(pool, pool.participants.find(pt => pt.name === nameA)).total;
+    const scoreB = computeGolfTeamParticipantScore(pool, pool.participants.find(pt => pt.name === nameB)).total;
+    if (scoreA === null || scoreB === null) return;
+    entries.push({
+      date: pool.timestamp, label: `Golf Draft \u2014 ${pool.name || pool.gameLabel}`,
+      results: { [nameA]: -scoreA, [nameB]: -scoreB }
+    });
+  });
+  entries.sort((a,b) => new Date(b.date) - new Date(a.date));
+  return entries;
+}
 function h2hTrackerId(nameA, nameB) {
   return 'h2h_' + [nameA, nameB].sort().join('_vs_');
 }
@@ -5713,7 +5767,12 @@ function renderFriendCommentsSection(f) {
   const chatId = friendChatId(profile.name, f.name);
   const wrap = el('div');
   wrap.style.cssText = 'margin-top:10px;border-top:1px solid var(--border);padding-top:8px;';
-  wrap.appendChild(el('div', null, 'Messages')).style.cssText = 'font-size:11px;font-weight:700;color:var(--text-dim);margin-bottom:6px;';
+  const isOpen = !!commentSectionOpen[chatId];
+  const header = el('div', null, `${isOpen ? '\u25be' : '\u25b8'} Messages`);
+  header.style.cssText = 'font-size:11px;font-weight:700;color:var(--text-dim);cursor:pointer;';
+  header.onclick = () => { commentSectionOpen[chatId] = !isOpen; render(); };
+  wrap.appendChild(header);
+  if (!isOpen) return wrap;
 
   const shown = allPicks.filter(p => p.poolType === 'comment' && p.poolId === chatId)
     .slice().sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -6650,6 +6709,39 @@ async function persistNewlySettledPlayerProps() {
 let golfFieldCache = null; // { tournamentId, tournamentName, completed, players: [{id, name, score}] } | null
 let golfFieldAttempted = false;
 let golfFieldCacheTime = 0;
+let golfRankMap = null; // name(lowercase) -> OWGR rank number, or null if unavailable
+let golfRankAttempted = false;
+async function fetchGolfRankings() {
+  if (golfRankAttempted) return golfRankMap;
+  golfRankAttempted = true;
+  try {
+    const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/golf/rankings');
+    if (!res.ok) return null;
+    const json = await res.json();
+    const list = (json.rankings && json.rankings[0] && json.rankings[0].athletes) || json.athletes || [];
+    if (!Array.isArray(list) || !list.length) return null;
+    const map = {};
+    list.forEach(entry => {
+      const name = entry.athlete && (entry.athlete.displayName || entry.athlete.shortName);
+      const rank = entry.rank || entry.current;
+      if (name && rank) map[name.toLowerCase()] = rank;
+    });
+    if (!Object.keys(map).length) return null;
+    golfRankMap = map;
+    return golfRankMap;
+  } catch (e) { return null; } // no reliable free OWGR source confirmed — fails soft to alphabetical
+}
+function golfPlayersSortedByRank(players) {
+  if (!golfRankMap) return players.slice().sort((a,b) => a.name.localeCompare(b.name));
+  return players.slice().sort((a,b) => {
+    const ra = golfRankMap[a.name.toLowerCase()];
+    const rb = golfRankMap[b.name.toLowerCase()];
+    if (ra !== undefined && rb !== undefined) return ra - rb;
+    if (ra !== undefined) return -1;
+    if (rb !== undefined) return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
 function parseGolfScore(s) {
   if (s === null || s === undefined) return null;
   const str = String(s).trim();
