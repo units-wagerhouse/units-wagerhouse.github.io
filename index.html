@@ -2339,6 +2339,14 @@ function renderPoolsSection() {
       return wrap;
     }
 
+    const poolDateScroller = el('div', 'league-scroller');
+    [['week','All Week'],['today','Today'],['tomorrow','Tomorrow']].forEach(([id,label]) => {
+      const pill = el('button', 'league-pill' + (poolBuilderDateFilter === id ? ' active' : ''), label);
+      pill.onclick = () => { poolBuilderDateFilter = id; poolLegDraft.gameId = ''; poolLegDraft.betType = ''; render(); };
+      poolDateScroller.appendChild(pill);
+    });
+    wrap.appendChild(poolDateScroller);
+
     const cartBar = el('div'); cartBar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin:8px 0;';
     cartBar.appendChild(el('div', null, `${poolBuilderLegs.length} game${poolBuilderLegs.length === 1 ? '' : 's'} in cart`)).style.cssText = 'font-size:12px;color:var(--text-dim);font-weight:700;';
     wrap.appendChild(cartBar);
@@ -3160,14 +3168,6 @@ function renderPoolBuilder() {
 
   const addCard = el('div');
   addCard.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
-
-  const poolDateScroller = el('div', 'league-scroller');
-  [['week','All Week'],['today','Today'],['tomorrow','Tomorrow']].forEach(([id,label]) => {
-    const pill = el('button', 'league-pill' + (poolBuilderDateFilter === id ? ' active' : ''), label);
-    pill.onclick = () => { poolBuilderDateFilter = id; poolLegDraft.gameId = ''; poolLegDraft.betType = ''; render(); };
-    poolDateScroller.appendChild(pill);
-  });
-  addCard.appendChild(poolDateScroller);
 
   addCard.appendChild(el('label', null, 'Game'));
   const gameSel = el('select');
