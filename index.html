@@ -2305,11 +2305,12 @@ function renderPoolTabs() {
   if (!profile) return;
   const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && (p.propType === 'combo_pool' || p.propType === 'golf_team'));
   const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
+  const dailyPoolHasSlate = !dailyPoolDone && !!(dailyBaseSlate() || []).length;
   const declinedIds0 = declinedPoolIdsFor(profile.name);
   const cartIds0 = cartPoolIdsFor(profile.name);
   const receivedCount = allPools0.filter(p => p.status === 'open' && p.creator !== profile.name && !(p.participants || []).some(pt => pt.name === profile.name) && !declinedIds0.has(p.id) && !cartIds0.has(p.id) && (
     p.visibility === 'public' || (p.visibility === 'friend' && p.targetFriend === profile.name) || isMyGroupChallenge(p)
-  )).length + (dailyPoolDone ? 0 : 1);
+  )).length + (dailyPoolHasSlate ? 1 : 0);
   const activeCount = allPools0.filter(p => p.status !== 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name))).length;
   const completedCount = allPools0.filter(p => p.status === 'settled' && (p.creator === profile.name || (p.participants || []).some(pt => pt.name === profile.name))).length + (dailyPoolDone ? 1 : 0);
   [['create','Create'],['requested', `Pending (${receivedCount})`],['accepted', `Active (${activeCount})`],['settled', `Completed (${completedCount})`]].forEach(([id,label]) => {
@@ -2396,7 +2397,7 @@ function renderPoolsSection() {
     if (poolBrowseMode === 'cart') return renderPoolSwipeCart();
 
     const rows = [toggle];
-    const showDaily = !dailyPoolDone && !dailyPoolSwipedAway;
+    const showDaily = !dailyPoolDone && !dailyPoolSwipedAway && !!(dailyBaseSlate() || []).length;
     return renderPoolSwipeMode(rows, showDaily);
   } else if (poolsActiveTab === 'accepted') {
     if (!activePools.length) { wrap.appendChild(el('div', 'empty', "You haven't built or joined any pools yet.")); }
