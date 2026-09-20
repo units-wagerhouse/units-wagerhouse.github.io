@@ -3160,8 +3160,16 @@ function renderPoolBuilder() {
     const sport = leagueSel.value;
     gameSel.innerHTML = '';
     const todayKey = houseDayKey(new Date());
-    const games = (DATA[sport] || []).filter(g => g.status === 'scheduled' && houseDayKey(new Date(g.start)) === todayKey);
-    if (!games.length) { const o = document.createElement('option'); o.value = ''; o.textContent = 'No games today'; gameSel.appendChild(o); }
+    const moneylineOnly = !!(LEAGUES_META.find(l => l.id === sport) || {}).moneylineOnly;
+    const games = (DATA[sport] || []).filter(g => {
+      if (g.status !== 'scheduled') return false;
+      if (houseDayKey(new Date(g.start)) !== todayKey) return false;
+      if (moneylineOnly) return true; // moneyline itself is the only market these leagues offer
+      const hasSpread = computeSpread(sport, g) !== null;
+      const hasTotal = g.overUnder !== null && g.overUnder !== undefined;
+      return hasSpread || hasTotal;
+    });
+    if (!games.length) { const o = document.createElement('option'); o.value = ''; o.textContent = 'No games with posted lines today'; gameSel.appendChild(o); }
     games.slice().sort((a,b) => new Date(a.start) - new Date(b.start)).forEach(g => {
       const o = document.createElement('option'); o.value = g.id;
       o.textContent = `${fullTeamName2(sport, g, g.away)} @ ${fullTeamName2(sport, g, g.home)}`;
@@ -3479,7 +3487,8 @@ function renderGolfTeamPoolCard(pool) {
   card.appendChild(tiersHeader);
   if (tiersOpen) {
     const tiersWrap = el('div'); tiersWrap.style.cssText = 'margin-top:6px;';
-    (pool.tiers || []).forEach((tier, i) => {
+    ['tier1','tier2','tier3','tier4','tier5'].forEach((key, i) => {
+      const tier = (pool.tiers && pool.tiers[key]) || [];
       const row = el('div'); row.style.cssText = 'font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);';
       row.innerHTML = `<span style="font-weight:700;">Tier ${i+1}</span> <span style="color:var(--text-faint);">${tier.join(', ')}</span>`;
       tiersWrap.appendChild(row);
@@ -3537,7 +3546,8 @@ function renderGolfTeamJoinForm(pool) {
     const sel = el('select');
     sel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
     const blank = document.createElement('option'); blank.value = ''; blank.textContent = 'Select a player…'; sel.appendChild(blank);
-    const options = key === 'wild' ? (pool.tiers || []).flat() : (pool.tiers && pool.tiers[i]) || [];
+    const tiersObj = pool.tiers || {};
+    const options = key === 'wild' ? [tiersObj.tier1, tiersObj.tier2, tiersObj.tier3, tiersObj.tier4, tiersObj.tier5].flat().filter(Boolean) : (tiersObj[key] || []);
     options.slice().sort().forEach(name => { const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o); });
     if (golfTeamJoinPicks[key]) sel.value = golfTeamJoinPicks[key];
     sel.onchange = () => { golfTeamJoinPicks[key] = sel.value; };
@@ -3953,7 +3963,7 @@ function renderGolfTeamPoolBuilder(field) {
       poolType: 'challenge', propType: 'golf_team', creator: profile.name,
       sport: 'pga', gameLabel: field.tournamentName, tournamentId: field.tournamentId,
       name: golfTeamBuilderName.trim() || null,
-      tiers: golfTeamBuilderTiers.map(t => t.slice()),
+      tiers: { tier1: golfTeamBuilderTiers[0].slice(), tier2: golfTeamBuilderTiers[1].slice(), tier3: golfTeamBuilderTiers[2].slice(), tier4: golfTeamBuilderTiers[3].slice(), tier5: golfTeamBuilderTiers[4].slice() },
       paidPositions, visibility, groupId, targetFriend,
       status: 'open', participants: [],
       timestamp: new Date().toISOString()
