@@ -440,6 +440,7 @@ let poolBuilderBuyIn = 10;
 let poolBuilderBudget = 10;
 let poolBuilderMaxPerPick = 10;
 let poolBuilderPaid = 1;
+let poolBuilderMustPickAll = true;
 let poolBuilderVisibility = 'public';
 let challengeTypeSelection = {}; // gameId -> 'spread' | 'total' | 'playerprop'
 
@@ -1639,9 +1640,10 @@ function renderFriendsScreen() {
               h2hHistory.forEach(entry => {
                 const val = entry.results[name];
                 if (val === undefined) return;
+                const label = (entry.labels && entry.labels[name]) || entry.label;
                 const dateStr = new Date(entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                 const row = el('div'); row.style.cssText = 'display:flex;justify-content:space-between;font-size:11px;padding:3px 0;color:var(--text-dim);';
-                row.innerHTML = `<span>${entry.label} <span style="color:var(--text-faint);">\u00b7 ${dateStr}</span></span><span style="font-weight:700;color:${val > 0 ? 'var(--accent)' : (val < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${val > 0 ? '+' : ''}${Math.round(val)}u</span>`;
+                row.innerHTML = `<span>${label} <span style="color:var(--text-faint);">\u00b7 ${dateStr}</span></span><span style="font-weight:700;color:${val > 0 ? 'var(--accent)' : (val < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${val > 0 ? '+' : ''}${Math.round(val)}u</span>`;
                 histWrap.appendChild(row);
               });
             }
@@ -3322,11 +3324,28 @@ function renderPoolBuilder() {
   }
 
   const cfgCard = el('div'); cfgCard.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
+
+  const mustPickRow = el('div'); mustPickRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;';
+  const mustPickLabel = el('div');
+  mustPickLabel.innerHTML = `<div style="font-size:13px;font-weight:700;">Must pick every game</div><div style="font-size:11px;color:var(--text-faint);">When on, the unit budget can\u2019t be lower than the number of games \u2014 everyone has enough to bet on all of them.</div>`;
+  mustPickRow.appendChild(mustPickLabel);
+  const mustPickToggle = el('button', null, poolBuilderMustPickAll ? 'ON' : 'OFF');
+  mustPickToggle.style.cssText = `flex-shrink:0;margin-left:10px;background:${poolBuilderMustPickAll ? 'var(--accent-dark)' : 'none'};border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:800;`;
+  mustPickToggle.onclick = () => { poolBuilderMustPickAll = !poolBuilderMustPickAll; render(); };
+  mustPickRow.appendChild(mustPickToggle);
+  cfgCard.appendChild(mustPickRow);
+
+  const minBudget = poolBuilderMustPickAll ? Math.max(10, poolBuilderLegs.length) : 1;
   cfgCard.appendChild(el('label', null, 'Units per person'));
-  const budgetInput = el('input'); budgetInput.type = 'number'; budgetInput.min = '1'; budgetInput.step = '1'; budgetInput.value = String(poolBuilderBudget);
-  budgetInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+  const budgetInput = el('input'); budgetInput.type = 'number'; budgetInput.min = String(minBudget); budgetInput.step = '1';
+  if (poolBuilderMustPickAll && parseFloat(poolBuilderBudget) < minBudget) poolBuilderBudget = minBudget;
+  budgetInput.value = String(poolBuilderBudget);
+  budgetInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:4px;box-sizing:border-box;';
   budgetInput.oninput = () => { poolBuilderBudget = budgetInput.value; };
   cfgCard.appendChild(budgetInput);
+  if (poolBuilderMustPickAll) {
+    cfgCard.appendChild(el('div', 'setup-hint', `Minimum ${minBudget} units with "must pick every game" on (${poolBuilderLegs.length} game${poolBuilderLegs.length === 1 ? '' : 's'} in this pool).`));
+  }
 
   cfgCard.appendChild(el('label', null, 'Max units per pick'));
   const maxPerPickInput = el('input'); maxPerPickInput.type = 'number'; maxPerPickInput.min = '1'; maxPerPickInput.step = '1'; maxPerPickInput.value = String(poolBuilderMaxPerPick);
@@ -3355,6 +3374,7 @@ function renderPoolBuilder() {
     const maxUnitsPerPick = parseFloat(maxPerPickInput.value);
     submitErr.textContent = '';
     if (!houseUnitsBudget || houseUnitsBudget <= 0) { submitErr.textContent = 'Enter a valid unit budget.'; return; }
+    if (poolBuilderMustPickAll && houseUnitsBudget < Math.max(10, poolBuilderLegs.length)) { submitErr.textContent = `With "must pick every game" on, you need at least ${Math.max(10, poolBuilderLegs.length)} units for ${poolBuilderLegs.length} games.`; return; }
     if (!paidPositions || paidPositions < 1) { submitErr.textContent = 'Enter at least 1 paid position.'; return; }
     if (!maxUnitsPerPick || maxUnitsPerPick < 1) { submitErr.textContent = 'Max units per pick must be at least 1.'; return; }
     const rawVis = poolBuilderVisibility;
@@ -3367,7 +3387,7 @@ function renderPoolBuilder() {
       sport: poolBuilderLegs[0].sport, gameLabel: poolBuilderLegs.map(l => l.gameLabel).join(' + '),
       name: poolBuilderName.trim() || null,
       legs: poolBuilderLegs.slice(),
-      houseUnitsBudget, paidPositions, maxUnitsPerPick,
+      houseUnitsBudget, paidPositions, maxUnitsPerPick, mustPickAll: poolBuilderMustPickAll,
       visibility: poolVisibility, groupId: poolGroupId, targetFriend: poolTargetFriend,
       status: 'open', participants: [],
       timestamp: new Date().toISOString()
@@ -3378,7 +3398,7 @@ function renderPoolBuilder() {
       await savePicks(allPicks);
       poolBuilderLegs = [];
       poolBuilderName = '';
-      poolBuilderBuyIn = 10; poolBuilderBudget = 10; poolBuilderMaxPerPick = 10; poolBuilderPaid = 1; poolBuilderVisibility = 'public';
+      poolBuilderBuyIn = 10; poolBuilderBudget = 10; poolBuilderMaxPerPick = 10; poolBuilderPaid = 1; poolBuilderVisibility = 'public'; poolBuilderMustPickAll = true;
       poolLegDraft = { league: '', gameId: '', betType: '', propName: '', propCat: '', propLine: '' };
       poolBuilderOpen = false;
       poolsActiveTab = 'accepted';
@@ -3402,6 +3422,9 @@ function poolLegSideOptions(leg) {
   if (leg.betType === 'playerprop') {
     return [{ side: 'OVER', team: leg.playerName + ' Over', label: String(leg.line) }, { side: 'UNDER', team: leg.playerName + ' Under', label: String(leg.line) }];
   }
+  if (leg.betType === 'golf_h2h') {
+    return [leg.playerA, leg.playerB].map(name => ({ side: name, team: name, label: 'to win' }));
+  }
   const g = (DATA[leg.sport] || []).find(x => x.id === leg.gameId);
   if (!g) return null;
   if (leg.betType === 'total') {
@@ -3421,6 +3444,12 @@ function poolLegSideOptions(leg) {
 }
 function poolAnyGameStarted(pool) {
   return pool.legs.some(leg => {
+    if (leg.betType === 'golf_h2h') {
+      const field = (golfFieldCache && golfFieldCache.tournamentId === leg.tournamentId) ? golfFieldCache : null;
+      if (!field) return true; // can't confirm the tournament hasn't started — treat as started to be safe
+      const p = field.players.find(x => x.name === leg.playerA);
+      return field.completed || (p && p.score !== null); // any posted score means the tournament is underway
+    }
     const g = (DATA[leg.sport] || []).find(x => x.id === leg.gameId);
     return !g || g.status !== 'scheduled'; // can't confirm it's still scheduled — treat as started to be safe
   });
@@ -3445,6 +3474,15 @@ function poolParticipantScore(pool, participant) {
       if (statVal === leg.line) return; // push
       const hit = pick.sideAbbr === 'OVER' ? statVal > leg.line : statVal < leg.line;
       if (hit) total += pick.confUnits; else total -= pick.confUnits;
+      return;
+    }
+    if (leg.betType === 'golf_h2h') {
+      const field = (golfFieldCache && golfFieldCache.tournamentId === leg.tournamentId) ? golfFieldCache : null;
+      if (!field || !field.completed) { allSettled = false; return; }
+      const result = golfH2HWinner(field, leg.playerA, leg.playerB, leg.round || 'total');
+      if (result.pending) { allSettled = false; return; }
+      if (result.push) return; // void this leg
+      if (result.winner === pick.sideAbbr) total += pick.confUnits; else total -= pick.confUnits;
       return;
     }
     const r = settlePick({ gameId: leg.gameId, betType: leg.betType, sideAbbr: pick.sideAbbr, line: leg.betType === 'total' ? ((DATA[leg.sport] || []).find(g => g.id === leg.gameId) || {}).overUnder : undefined });
@@ -3685,7 +3723,7 @@ function renderPoolCard(pool) {
   if (legsOpen) {
     const legsWrap = el('div'); legsWrap.style.marginTop = '6px';
     pool.legs.forEach(leg => {
-      const legLabel = leg.betType === 'total' ? 'Total' : leg.betType === 'moneyline' ? 'Moneyline' : leg.betType === 'playerprop' ? `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} (${leg.line})` : 'Spread';
+      const legLabel = leg.betType === 'total' ? 'Total' : leg.betType === 'moneyline' ? 'Moneyline' : leg.betType === 'golf_h2h' ? 'Head-to-Head' : leg.betType === 'playerprop' ? `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} (${leg.line})` : 'Spread';
       const myPick = myEntry ? myEntry.picks.find(p => p.gameId === leg.gameId && p.betType === leg.betType && (leg.betType !== 'playerprop' || (p.playerName === leg.playerName && p.statCategory === leg.statCategory))) : null;
       let myPickText = '';
       if (myPick) {
@@ -3757,7 +3795,7 @@ function renderPoolJoinForm(pool) {
     const key = poolLegKey(pool.id, leg);
     const opts = poolLegSideOptions(leg);
     const legCard = el('div'); legCard.style.cssText = 'margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);';
-    const legLabel = leg.betType === 'total' ? 'Total' : leg.betType === 'moneyline' ? 'Moneyline' : leg.betType === 'playerprop' ? `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory}` : 'Spread';
+    const legLabel = leg.betType === 'total' ? 'Total' : leg.betType === 'moneyline' ? 'Moneyline' : leg.betType === 'golf_h2h' ? 'Head-to-Head' : leg.betType === 'playerprop' ? `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory}` : 'Spread';
     legCard.appendChild(el('div', null, leg.gameLabel + ' \u2014 ' + legLabel)).style.cssText = 'font-size:12px;font-weight:700;margin-bottom:6px;';
     if (!opts) { legCard.appendChild(el('div', 'empty', 'Game data unavailable right now.')); wrap.appendChild(legCard); return; }
     const sideGrid = el('div', 'outcome-grid');
@@ -3791,15 +3829,21 @@ function renderPoolJoinForm(pool) {
   const joinBtn = el('button', 'lock-btn', 'Join Pool');
   joinBtn.onclick = async () => {
     errEl.textContent = '';
-    const missingSide = pool.legs.some(leg => !poolJoinSides[poolLegKey(pool.id, leg)]);
-    if (missingSide) { errEl.textContent = 'Pick a side for every game.'; return; }
-    const underweighted = pool.legs.some(leg => (poolJoinUnits[poolLegKey(pool.id, leg)] || 0) < 1);
-    if (underweighted) { errEl.textContent = 'Every game needs at least 1 house unit.'; return; }
-    const overCap = pool.legs.some(leg => (poolJoinUnits[poolLegKey(pool.id, leg)] || 0) > (pool.maxUnitsPerPick || pool.houseUnitsBudget));
+    const mustPickAll = pool.mustPickAll !== false; // undefined treated as true for pools created before this setting existed
+    const pickedLegs = mustPickAll ? pool.legs : pool.legs.filter(leg => !!poolJoinSides[poolLegKey(pool.id, leg)]);
+    if (mustPickAll) {
+      const missingSide = pool.legs.some(leg => !poolJoinSides[poolLegKey(pool.id, leg)]);
+      if (missingSide) { errEl.textContent = 'Pick a side for every game.'; return; }
+    } else if (!pickedLegs.length) {
+      errEl.textContent = 'Pick at least one game.'; return;
+    }
+    const underweighted = pickedLegs.some(leg => (poolJoinUnits[poolLegKey(pool.id, leg)] || 0) < 1);
+    if (underweighted) { errEl.textContent = 'Every picked game needs at least 1 house unit.'; return; }
+    const overCap = pickedLegs.some(leg => (poolJoinUnits[poolLegKey(pool.id, leg)] || 0) > (pool.maxUnitsPerPick || pool.houseUnitsBudget));
     if (overCap) { errEl.textContent = `No single pick can exceed ${pool.maxUnitsPerPick || pool.houseUnitsBudget} units.`; return; }
     if (totalUsed > pool.houseUnitsBudget) { errEl.textContent = "You've used more than your house-unit budget."; return; }
     joinBtn.disabled = true; joinBtn.textContent = 'Joining…';
-    const picks = pool.legs.map(leg => ({ gameId: leg.gameId, betType: leg.betType, playerName: leg.playerName, statCategory: leg.statCategory, sideAbbr: poolJoinSides[poolLegKey(pool.id, leg)], confUnits: poolJoinUnits[poolLegKey(pool.id, leg)] || 1 }));
+    const picks = pickedLegs.map(leg => ({ gameId: leg.gameId, betType: leg.betType, playerName: leg.playerName, statCategory: leg.statCategory, sideAbbr: poolJoinSides[poolLegKey(pool.id, leg)], confUnits: poolJoinUnits[poolLegKey(pool.id, leg)] || 1 }));
     const idx = allPicks.findIndex(p => p.id === pool.id);
     if (idx === -1) { errEl.textContent = 'Pool no longer exists.'; joinBtn.disabled = false; joinBtn.textContent = 'Join Pool'; return; }
     if (!allPicks[idx].participants) allPicks[idx].participants = [];
@@ -3890,29 +3934,43 @@ function assignedGolfPlayerNames() {
   golfTeamBuilderTiers.forEach(tier => tier.forEach(n => s.add(n)));
   return s;
 }
+const GOLF_TIER_COLORS = ['#FFD700', '#C0C0C0', '#CD7F32', '#4A90D9', '#9B59B6'];
 function renderGolfTeamPoolBuilder(field) {
   const wrap = el('div');
 
   if (golfTeamBuilderStep <= 4) {
     const tierNum = golfTeamBuilderStep;
     wrap.appendChild(el('div', 'setup-hint', `Build your draft board. Select every player you want in Tier ${tierNum}, then submit — whoever's left over after Tier 4 automatically becomes Tier 5. Everyone who joins will pick one player from each tier, plus a wild card from any tier.`));
-    wrap.appendChild(el('div', null, `Tier ${tierNum} (${golfTeamBuilderTiers[tierNum-1].length} selected)`)).style.cssText = 'font-size:14px;font-weight:800;margin:8px 0 6px;';
 
-    const assigned = assignedGolfPlayerNames();
-    const remaining = field.players.filter(p => !assigned.has(p.name));
-    if (!remaining.length) {
+    for (let t = 0; t < tierNum - 1; t++) {
+      if (!golfTeamBuilderTiers[t].length) continue;
+      const tierBlock = el('div');
+      tierBlock.style.cssText = `border:2px solid ${GOLF_TIER_COLORS[t]};border-radius:8px;padding:8px 10px;margin-bottom:8px;`;
+      tierBlock.appendChild(el('div', null, `Tier ${t+1} (${golfTeamBuilderTiers[t].length})`)).style.cssText = `font-size:11px;font-weight:800;color:${GOLF_TIER_COLORS[t]};text-transform:uppercase;margin-bottom:4px;`;
+      tierBlock.appendChild(el('div', null, golfTeamBuilderTiers[t].join(', '))).style.cssText = 'font-size:12px;color:var(--text-dim);';
+      wrap.appendChild(tierBlock);
+    }
+
+    wrap.appendChild(el('div', null, `Tier ${tierNum} (${golfTeamBuilderTiers[tierNum-1].length} selected)`)).style.cssText = `font-size:14px;font-weight:800;margin:8px 0 6px;color:${GOLF_TIER_COLORS[tierNum-1]};`;
+
+    const candidatePool = field.players.filter(p => {
+      const inThisTier = golfTeamBuilderTiers[tierNum-1].includes(p.name);
+      const inEarlierTier = golfTeamBuilderTiers.slice(0, tierNum - 1).some(t => t.includes(p.name));
+      return inThisTier || !inEarlierTier;
+    });
+    if (!candidatePool.length) {
       wrap.appendChild(el('div', 'empty', 'No players left to assign — go back or reset if you want to redo a tier.'));
     } else {
       const listWrap = el('div');
       listWrap.style.cssText = 'max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px;';
-      golfPlayersSortedByRank(remaining).forEach(p => {
+      golfPlayersSortedByRank(candidatePool).forEach(p => {
         const rank = p.rank;
         const selected = golfTeamBuilderTiers[tierNum-1].includes(p.name);
         const row = el('div', 'pick-row');
-        row.style.cssText = 'margin-top:4px;cursor:pointer;' + (selected ? 'border-color:var(--accent);' : '');
+        row.style.cssText = 'margin-top:4px;cursor:pointer;' + (selected ? `border-color:${GOLF_TIER_COLORS[tierNum-1]};background:${GOLF_TIER_COLORS[tierNum-1]}22;` : '');
         row.innerHTML = `<div class="who">${rank ? `#${rank} ` : ''}${p.name}</div>`;
         const check = el('div', null, selected ? '\u2713' : '');
-        check.style.cssText = 'color:var(--accent);font-weight:900;font-size:16px;';
+        check.style.cssText = `color:${GOLF_TIER_COLORS[tierNum-1]};font-weight:900;font-size:16px;`;
         row.appendChild(check);
         row.onclick = () => {
           const tier = golfTeamBuilderTiers[tierNum-1];
@@ -3961,8 +4019,9 @@ function renderGolfTeamPoolBuilder(field) {
   // Step 5: review tiers + pool settings + create
   wrap.appendChild(el('div', null, 'Review Your Tiers')).style.cssText = 'font-size:16px;font-weight:800;margin-bottom:8px;';
   golfTeamBuilderTiers.forEach((tier, i) => {
-    const card = el('div', 'event-card');
-    card.appendChild(el('div', null, `Tier ${i+1} (${tier.length})`)).style.cssText = 'font-size:12.5px;font-weight:800;margin-bottom:4px;';
+    const card = el('div');
+    card.style.cssText = `border:2px solid ${GOLF_TIER_COLORS[i]};border-radius:8px;padding:8px 10px;margin-bottom:8px;`;
+    card.appendChild(el('div', null, `Tier ${i+1} (${tier.length})`)).style.cssText = `font-size:11px;font-weight:800;color:${GOLF_TIER_COLORS[i]};text-transform:uppercase;margin-bottom:4px;`;
     card.appendChild(el('div', null, tier.join(', ') || 'None')).style.cssText = 'font-size:12px;color:var(--text-dim);';
     wrap.appendChild(card);
   });
@@ -4064,7 +4123,7 @@ function renderGolfSection() {
     return wrap;
   }
 
-  wrap.appendChild(el('div', 'setup-hint', "Golf challenges are ML bets: pick two players from the current tournament field, and whoever posts the lower score when the tournament finishes wins. Beta — double-check results once they settle."));
+  wrap.appendChild(el('div', 'setup-hint', "Add a golf matchup as one leg of a pool. Whoever joins the pool picks a side on this matchup just like any other leg — you can mix it with games from other sports in the same pool."));
 
 
   wrap.appendChild(el('div', 'week-header', field.tournamentName));
@@ -4081,6 +4140,8 @@ function renderGolfSection() {
     field.players.slice().sort((a,b) => a.name.localeCompare(b.name)).forEach(p => { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name; sel.appendChild(o); });
   });
   selA.value = draft.playerA; selB.value = draft.playerB;
+  selA.onchange = () => { draft.playerA = selA.value; };
+  selB.onchange = () => { draft.playerB = selB.value; };
   row.appendChild(selA); row.appendChild(selB);
   wrap.appendChild(row);
 
@@ -4094,107 +4155,41 @@ function renderGolfSection() {
   wrap.appendChild(roundSel);
   wrap.appendChild(el('div', 'setup-hint', "If it's Round 3, Round 4, or Total, and one player misses the cut while the other makes it, the player who made the cut automatically wins."));
 
-  const sideGrid = el('div', 'outcome-grid');
-  sideGrid.style.marginTop = '8px';
-  function rebuildSideGrid() {
-    sideGrid.innerHTML = '';
-    if (!selA.value || !selB.value || selA.value === selB.value) return;
-    [selA.value, selB.value].forEach(name => {
-      const btn = el('div', 'outcome-btn' + (draft.chosenPlayer === name ? ' selected' : ''));
-      btn.innerHTML = `<div class="oc-team">${name}</div><div class="oc-line">to win</div>`;
-      btn.onclick = () => {
-        draft.chosenPlayer = name;
-        sideGrid.querySelectorAll('.outcome-btn').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-        createBtn.disabled = false;
-        createBtn.textContent = 'Submit Challenge';
-      };
-      sideGrid.appendChild(btn);
-    });
-  }
-  selA.onchange = () => { draft.playerA = selA.value; draft.chosenPlayer = null; createBtn.disabled = true; rebuildSideGrid(); };
-  selB.onchange = () => { draft.playerB = selB.value; draft.chosenPlayer = null; createBtn.disabled = true; rebuildSideGrid(); };
-  wrap.appendChild(sideGrid);
-
-  const oddsWrap = el('div');
-  oddsWrap.style.cssText = 'margin-top:8px;';
-  oddsWrap.appendChild(el('div', null, 'Payout odds for whoever accepts')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:6px;';
-  const oddsRow = el('div'); oddsRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
-  [['3','3:1'],['2','2:1'],['1','Even (1:1)'],['0.5','1:2'],['0.333333333','1:3']].forEach(([val,label], i) => {
-    const btn = el('button', null, label);
-    const isCurrent = Math.abs(parseFloat(val) - draft.oddsMultiplier) < 0.01;
-    btn.style.cssText = `background:none;border:1px solid ${isCurrent ? 'var(--accent)' : 'var(--border)'};color:${isCurrent ? 'var(--accent)' : 'var(--text-dim)'};border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;`;
-    btn.onclick = () => {
-      draft.oddsMultiplier = parseFloat(val);
-      oddsRow.querySelectorAll('button').forEach(b => { b.style.borderColor = 'var(--border)'; b.style.color = 'var(--text-dim)'; });
-      btn.style.borderColor = 'var(--accent)'; btn.style.color = 'var(--accent)';
-    };
-    oddsRow.appendChild(btn);
-  });
-  oddsWrap.appendChild(oddsRow);
-  oddsWrap.appendChild(el('div', 'setup-hint', 'You always get even money back on your own pick. These odds only change what the person who accepts is paid if their pick wins — 2:1 pays them double their stake, 1:2 pays them half.'));
-  wrap.appendChild(oddsWrap);
-
-  const slip = el('div', 'bet-slip');
-  const row2 = el('div'); row2.style.cssText = 'display:flex;align-items:center;gap:6px;';
-  const unitsLabel = el('span', null, 'Units Staked'); unitsLabel.style.cssText = 'font-size:11px;color:var(--text-dim);font-weight:700;flex-shrink:0;';
-  row2.appendChild(unitsLabel);
-  const unitsInput = el('input'); unitsInput.type = 'number'; unitsInput.min = '1'; unitsInput.step = '1'; unitsInput.value = draft.units; unitsInput.placeholder = 'Units';
-  unitsInput.style.cssText = 'flex:0 0 auto;width:55px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:var(--font-mono);font-size:13px;box-sizing:border-box;';
-  unitsInput.oninput = () => { draft.units = unitsInput.value; };
-  row2.appendChild(unitsInput);
-  const visSel = el('select');
-  visSel.style.cssText = 'flex:0 0 auto;width:134px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 5px;font-size:12px;box-sizing:border-box;';
-  const publicOpt = document.createElement('option'); publicOpt.value = ''; publicOpt.textContent = '\ud83d\udce2 Post publicly'; visSel.appendChild(publicOpt);
-  (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel.appendChild(o); });
-  (allPicks.filter(p => p.poolType === 'friendGroup' && (p.members||[]).some(m=>m.uid===profile.uid))).forEach(grp => { const o = document.createElement('option'); o.value = 'group:' + grp.id; o.textContent = '\ud83d\udc65 ' + grp.name; visSel.appendChild(o); });
-  visSel.value = draft.visibility;
-  visSel.onchange = () => { draft.visibility = visSel.value; };
-  row2.appendChild(visSel);
-  slip.appendChild(row2);
-
-  const createBtn = el('button', 'lock-btn', draft.chosenPlayer ? 'Submit Challenge' : 'Pick two players first');
-  createBtn.disabled = !draft.chosenPlayer;
-  slip.appendChild(createBtn);
+  const addBtn = el('button', 'lock-btn', '+ Add Matchup to Pool');
+  addBtn.style.marginTop = '10px';
+  wrap.appendChild(addBtn);
   const errEl = el('div', 'pick-error');
-  slip.appendChild(errEl);
-  wrap.appendChild(slip);
-  rebuildSideGrid();
+  wrap.appendChild(errEl);
 
-  createBtn.onclick = async () => {
-    const units = Math.ceil(parseFloat(unitsInput.value));
+  addBtn.onclick = () => {
     errEl.textContent = '';
     if (!selA.value || !selB.value || selA.value === selB.value) { errEl.textContent = 'Pick two different players.'; return; }
-    if (!draft.chosenPlayer) { errEl.textContent = 'Pick who you think wins.'; return; }
-    if (!units || units <= 0) { errEl.textContent = 'Enter a valid unit amount.'; return; }
-    const displaySide = draft.chosenPlayer === selA.value ? selB.value : selA.value; // acceptor gets the opposite pick
-    const friend = visSel.value || null;
-    const groupId = friend && friend.startsWith('group:') ? friend.slice(6) : null;
-    const challenge = {
-      id: profile.name + '_challenge_golf_' + field.tournamentId + '_' + Date.now(),
-      poolType: 'challenge', propType: 'golf_h2h', creator: profile.name,
-      sport: 'pga', gameLabel: field.tournamentName, tournamentId: field.tournamentId,
-      playerA: selA.value, playerB: selB.value, sideAbbr: displaySide, units, round: roundSel.value,
-      oddsMultiplier: draft.oddsMultiplier, originalOddsMultiplier: 1,
-      visibility: groupId ? 'group' : (friend ? 'friend' : 'public'),
-      groupId, targetFriend: groupId ? null : friend, status: 'open', acceptedBy: null,
-      timestamp: new Date().toISOString()
-    };
-    createBtn.disabled = true; createBtn.textContent = 'Saving…';
-    allPicks.push(challenge);
-    const reserveTx = reserveChallengeStake(challenge, 'creator', challenge.units);
-    if (reserveTx) allPicks.push(reserveTx);
-    try {
-      await savePicks(allPicks);
-      delete golfDraftStore[field.tournamentId];
-      render();
-    } catch (e) {
-      allPicks.pop();
-      if (reserveTx) allPicks.pop();
-      createBtn.disabled = false; createBtn.textContent = 'Submit Challenge';
-      errEl.textContent = "Couldn't save (" + describeFetchError(e) + ") — try again.";
-    }
+    const gameId = 'golfh2h_' + field.tournamentId + '_' + selA.value + '_' + selB.value + '_' + roundSel.value;
+    if (poolBuilderLegs.some(l => l.gameId === gameId)) { errEl.textContent = 'That matchup is already in the pool.'; return; }
+    const roundLabels = { r1: 'R1', r2: 'R2', r3: 'R3', r4: 'R4', total: 'Total' };
+    poolBuilderLegs.push({
+      sport: 'pga', gameId, gameLabel: `${selA.value} vs ${selB.value}`, betType: 'golf_h2h',
+      tournamentId: field.tournamentId, playerA: selA.value, playerB: selB.value, round: roundSel.value,
+      displayText: `${selA.value} vs ${selB.value} (${roundLabels[roundSel.value]})`
+    });
+    delete golfDraftStore[field.tournamentId];
+    render();
   };
+
+  if (poolBuilderLegs.length) {
+    const cartBar = el('div');
+    cartBar.style.cssText = 'margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;';
+    cartBar.appendChild(el('div', null, `${poolBuilderLegs.length} game${poolBuilderLegs.length === 1 ? '' : 's'} in pool so far`)).style.cssText = 'font-size:12px;color:var(--text-dim);font-weight:700;';
+    const continueBtn = el('button', null, 'Continue Building Pool \u2192');
+    continueBtn.style.cssText = 'background:var(--accent-dark);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 14px;font-size:12.5px;font-weight:800;';
+    continueBtn.onclick = () => {
+      poolCreateSport = (LEAGUES_META.find(l => l.active && !l.isGolf) || {}).id || 'nfl';
+      poolLegDraft.league = poolCreateSport;
+      render();
+    };
+    cartBar.appendChild(continueBtn);
+    wrap.appendChild(cartBar);
+  }
   return wrap;
 }
 
@@ -4718,6 +4713,7 @@ function renderPoolSwipeCard(pool) {
     if (!opts) return 'Odds not posted yet';
     if (leg.betType === 'total') return (opts[0].label && opts[0].label !== 'undefined') ? `Total ${opts[0].label}` : 'Total \u2014 odds not posted yet';
     if (leg.betType === 'moneyline') return 'Moneyline';
+    if (leg.betType === 'golf_h2h') return full ? `${leg.playerA} vs ${leg.playerB} \u2014 to win` : `${leg.playerA} vs ${leg.playerB}`;
     if (leg.betType === 'playerprop') return `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} ${opts[0].label}`;
     const fav = opts.find(o => o.label && o.label.startsWith('-'));
     if (!fav) return 'Spread \u2014 odds not posted yet';
@@ -4739,6 +4735,9 @@ function renderPoolSwipeCard(pool) {
     const list = el('div');
     list.style.cssText = 'font-size:12.5px;color:#3a3528;font-weight:600;line-height:1.8;text-align:left;overflow-y:auto;flex:1;min-height:0;';
     list.innerHTML = pool.legs.map(leg => {
+      if (leg.betType === 'golf_h2h') {
+        return `<div style="margin-bottom:8px;"><b>${leg.playerA} vs ${leg.playerB}</b><br><span style="color:#5a5342;">${legValueText(leg, true)}</span></div>`;
+      }
       const idx = gameIndex[leg.gameId];
       const awayFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.away) : leg.gameLabel.split(' @ ')[0];
       const homeFull = idx && idx.game ? fullTeamName(leg.gameId, idx.game.home) : leg.gameLabel.split(' @ ')[1];
@@ -5536,7 +5535,8 @@ function computeH2HHistory(nameA, nameB, resetAt) {
     const profitAcceptor = computeChallengeProfit(ch, false);
     if (profitCreator === null || profitAcceptor === null) return;
     entries.push({
-      date: ch.timestamp, label: challengeMarketTxt(ch),
+      date: ch.timestamp,
+      labels: { [ch.creator]: challengeMarketTxt(ch), [ch.acceptedBy]: opponentSideView(ch) },
       results: { [ch.creator]: profitCreator, [ch.acceptedBy]: profitAcceptor }
     });
   });
@@ -5664,7 +5664,6 @@ function renderCompletedChallenges(mode) {
   const losses = settledOnes.filter(x => x.outcome === 'loss').length;
   const unitsWonChallenges = settledOnes.reduce((s,x) => s + (computeChallengeProfit(x.ch, x.ch.creator === profile.name) || 0), 0);
   const winPct = (wins + losses) > 0 ? (wins / (wins + losses) * 100) : 0;
-  const pendingUnits = active.reduce((s,ch) => s + displayUnitsFor(ch), 0);
 
   if (mode !== 'active') {
     const banner = el('div', 'rank-banner');
@@ -5682,10 +5681,6 @@ function renderCompletedChallenges(mode) {
     c3.appendChild(el('div', 'rc-label', 'Win<br>Percentage'));
     c3.appendChild(el('div', 'rc-value', winPct.toFixed(0) + '%'));
     banner.appendChild(c3);
-    const c4 = el('div', 'rank-cell');
-    c4.appendChild(el('div', 'rc-label', 'Pending units'));
-    c4.appendChild(el('div', 'rc-value', String(pendingUnits)));
-    banner.appendChild(c4);
     wrap.appendChild(banner);
   }
 
@@ -5784,7 +5779,7 @@ function renderFriendCommentsSection(f) {
   else { shown.forEach(c => { wrap.appendChild(renderCommentRow(c)); }); }
 
   const postRow = el('div'); postRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
-  const input = el('input'); input.placeholder = `Message ${f.name}…`;
+  const input = el('input'); input.id = 'comment-input-' + chatId; input.placeholder = `Message ${f.name}…`;
   input.style.cssText = 'flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 8px;font-size:12px;box-sizing:border-box;';
   postRow.appendChild(input);
   const postBtn = el('button', null, 'Post');
@@ -5831,7 +5826,7 @@ function renderGroupCommentsSection(grp) {
   }
 
   const postRow = el('div'); postRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
-  const input = el('input'); input.placeholder = 'Message the group…';
+  const input = el('input'); input.id = 'comment-input-' + grp.id; input.placeholder = 'Message the group…';
   input.style.cssText = 'flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 8px;font-size:12px;box-sizing:border-box;';
   postRow.appendChild(input);
   const postBtn = el('button', null, 'Post');
@@ -5878,7 +5873,7 @@ function renderPoolCommentsSection(pool) {
   }
 
   const postRow = el('div'); postRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
-  const input = el('input'); input.placeholder = 'Add a comment…';
+  const input = el('input'); input.id = 'comment-input-' + pool.id; input.placeholder = 'Add a comment…';
   input.style.cssText = 'flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 8px;font-size:12px;box-sizing:border-box;';
   postRow.appendChild(input);
   const postBtn = el('button', null, 'Post');
@@ -5934,7 +5929,7 @@ function renderCommentsSection(g, sport) {
   }
 
   const postRow = el('div'); postRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
-  const input = el('input'); input.placeholder = 'Add a comment…';
+  const input = el('input'); input.id = 'comment-input-' + pool.id + '-b'; input.placeholder = 'Add a comment…';
   input.style.cssText = 'flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 8px;font-size:12px;box-sizing:border-box;';
   postRow.appendChild(input);
   const visToggle = el('select');
@@ -6772,6 +6767,23 @@ function findGolferByName(field, typedName) {
   match = field.players.find(p => p.name.toLowerCase().includes(norm) || norm.includes(p.name.toLowerCase()));
   return match || null;
 }
+function golfH2HWinner(field, playerA, playerB, round) {
+  const a = findGolferByName(field, playerA);
+  const b = findGolferByName(field, playerB);
+  if (!a || !b) return { pending: true };
+  if ((round === 'r3' || round === 'r4' || round === 'total') && a.missedCut !== b.missedCut) {
+    return { winner: a.missedCut ? playerB : playerA, aScore: a.score, bScore: b.score };
+  }
+  let aScore, bScore;
+  if (round === 'r1') { aScore = a.roundScores[0]; bScore = b.roundScores[0]; }
+  else if (round === 'r2') { aScore = a.roundScores[1]; bScore = b.roundScores[1]; }
+  else if (round === 'r3') { aScore = a.roundScores[2]; bScore = b.roundScores[2]; }
+  else if (round === 'r4') { aScore = a.roundScores[3]; bScore = b.roundScores[3]; }
+  else { aScore = a.score; bScore = b.score; }
+  if (aScore === null || aScore === undefined || bScore === null || bScore === undefined) return { pending: true };
+  if (aScore === bScore) return { push: true, aScore, bScore };
+  return { winner: aScore < bScore ? playerA : playerB, aScore, bScore }; // lower score wins
+}
 async function persistNewlySettledGolfH2H() {
   let changed = false;
   const toCheck = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'golf_h2h' && !p.settledResult && (p.status === 'open' || p.status === 'accepted'));
@@ -6779,34 +6791,12 @@ async function persistNewlySettledGolfH2H() {
   const field = await fetchGolfField(false);
   if (!field || !field.completed) return false; // only settle once the tournament itself is final
   for (const p of toCheck) {
-    const a = findGolferByName(field, p.playerA);
-    const b = findGolferByName(field, p.playerB);
-    if (!a || !b) { if (!p.playerNotFound) { p.playerNotFound = true; changed = true; } continue; }
-    const round = p.round || 'total';
-    let aScore, bScore, cutRuleApplied = false, winnerName = null;
-
-    if ((round === 'r3' || round === 'r4' || round === 'total') && a.missedCut !== b.missedCut) {
-      // One player made the cut, the other didn't — whoever made the cut automatically wins this bet.
-      winnerName = a.missedCut ? p.playerB : p.playerA;
-      cutRuleApplied = true;
-    } else if (round === 'r1') { aScore = a.roundScores[0]; bScore = b.roundScores[0]; }
-    else if (round === 'r2') { aScore = a.roundScores[1]; bScore = b.roundScores[1]; }
-    else if (round === 'r3') { aScore = a.roundScores[2]; bScore = b.roundScores[2]; }
-    else if (round === 'r4') { aScore = a.roundScores[3]; bScore = b.roundScores[3]; }
-    else { aScore = a.score; bScore = b.score; }
-
-    if (!cutRuleApplied) {
-      if (aScore === null || aScore === undefined || bScore === null || bScore === undefined) {
-        if (!p.playerNotFound) { p.playerNotFound = true; changed = true; }
-        continue;
-      }
-      if (aScore === bScore) { p.settledResult = { status: 'push' }; changed = true; continue; }
-      winnerName = aScore < bScore ? p.playerA : p.playerB; // lower score wins
-    }
-
-    const outcome = winnerName === p.sideAbbr ? 'win' : 'loss';
+    const result = golfH2HWinner(field, p.playerA, p.playerB, p.round || 'total');
+    if (result.pending) { if (!p.playerNotFound) { p.playerNotFound = true; changed = true; } continue; }
+    if (result.push) { p.settledResult = { status: 'push' }; changed = true; continue; }
+    const outcome = result.winner === p.sideAbbr ? 'win' : 'loss';
     p.settledResult = { status: outcome, profit: outcome === 'win' ? p.units : -p.units };
-    p.finalScores = { [p.playerA]: aScore !== undefined ? aScore : a.score, [p.playerB]: bScore !== undefined ? bScore : b.score };
+    p.finalScores = { [p.playerA]: result.aScore, [p.playerB]: result.bScore };
     changed = true;
   }
   if (changed) { try { await savePicks(allPicks); } catch (e) { /* best-effort; retry next cycle */ } }
