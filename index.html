@@ -3310,10 +3310,14 @@ function renderPoolBuilder() {
     }
     if (poolBuilderLegs.some(l => l.gameId === g.id && l.betType === betType)) { addErr.textContent = 'Already have this market for this game.'; return; }
     const marketLabel = betType === 'total' ? `Total (${g.overUnder})` : (betType === 'moneyline' ? 'Moneyline' : 'Spread');
-    poolBuilderLegs.push({
-      sport, gameId: g.id, gameLabel: g.away + ' @ ' + g.home, betType,
-      displayText: `${fullTeamName2(sport, g, g.away)} @ ${fullTeamName2(sport, g, g.home)}: ${marketLabel}`
-    });
+    const snapshotLeg = { sport, gameId: g.id, gameLabel: g.away + ' @ ' + g.home, betType,
+      displayText: `${fullTeamName2(sport, g, g.away)} @ ${fullTeamName2(sport, g, g.home)}: ${marketLabel}` };
+    if (betType === 'total') snapshotLeg.line = g.overUnder;
+    if (betType === 'spread') {
+      const spread = computeSpread(sport, g);
+      if (spread !== null) { snapshotLeg.spreadFavSide = spread <= 0 ? g.home : g.away; snapshotLeg.spreadMagnitude = Math.abs(spread); }
+    }
+    poolBuilderLegs.push(snapshotLeg);
     poolLegDraft = { league: sport, gameId: '', betType: '', propName: '', propCat: '', propLine: '' };
     render();
   };
@@ -3418,6 +3422,32 @@ function renderPoolBuilder() {
 function poolLegKey(poolId, leg) {
   return poolId + '_' + leg.gameId + '_' + leg.betType + (leg.betType === 'playerprop' ? '_' + leg.playerName + '_' + leg.statCategory : '');
 }
+function legPickOutcome(pool, leg, pick) {
+  if (leg.betType === 'playerprop') {
+    const idx = gameIndex[leg.gameId];
+    const gameFinal = idx && idx.game && idx.game.status !== 'scheduled' && idx.game.status !== 'inprogress';
+    if (!gameFinal) return 'pending';
+    const box = boxScoreCache[leg.gameId];
+    if (box === undefined) return 'pending';
+    if (!box) return null;
+    const playerStats = findPlayerInBoxScore(box, leg.playerName);
+    if (!playerStats) return null;
+    const statVal = statValueFor(playerStats, leg.statCategory);
+    if (statVal === null || statVal === undefined) return null;
+    if (statVal === leg.line) return 'push';
+    return (pick.sideAbbr === 'OVER' ? statVal > leg.line : statVal < leg.line) ? 'win' : 'loss';
+  }
+  if (leg.betType === 'golf_h2h') {
+    const field = (golfFieldCache && golfFieldCache.tournamentId === leg.tournamentId) ? golfFieldCache : null;
+    if (!field || !field.completed) return 'pending';
+    const result = golfH2HWinner(field, leg.playerA, leg.playerB, leg.round || 'total');
+    if (result.pending) return 'pending';
+    if (result.push) return 'push';
+    return result.winner === pick.sideAbbr ? 'win' : 'loss';
+  }
+  const r = settlePick({ gameId: leg.gameId, betType: leg.betType, sideAbbr: pick.sideAbbr, line: leg.betType === 'total' ? ((DATA[leg.sport] || []).find(g => g.id === leg.gameId) || {}).overUnder : undefined });
+  return r.status; // 'win' | 'loss' | 'push' | 'pending'
+}
 function poolLegSideOptions(leg) {
   if (leg.betType === 'playerprop') {
     return [{ side: 'OVER', team: leg.playerName + ' Over', label: String(leg.line) }, { side: 'UNDER', team: leg.playerName + ' Under', label: String(leg.line) }];
@@ -3426,21 +3456,35 @@ function poolLegSideOptions(leg) {
     return [leg.playerA, leg.playerB].map(name => ({ side: name, team: name, label: 'to win' }));
   }
   const g = (DATA[leg.sport] || []).find(x => x.id === leg.gameId);
-  if (!g) return null;
+  const parts = (leg.gameLabel || '').split(' @ ');
+  const awayAbbr = g ? g.away : parts[0];
+  const homeAbbr = g ? g.home : parts[1];
+  const teamName = (ab) => g ? fullTeamName(g.id, ab) : ab;
   if (leg.betType === 'total') {
-    const tv = g.overUnder;
+    const tv = g ? g.overUnder : leg.line;
+    if (tv === undefined || tv === null) return null;
     return [{ side: 'OVER', team: 'Over', label: String(tv) }, { side: 'UNDER', team: 'Under', label: String(tv) }];
   }
   if (leg.betType === 'moneyline') {
-    return [g.away, g.home].map(ab => ({ side: ab, team: fullTeamName(g.id, ab), label: 'ML' }));
+    if (!awayAbbr || !homeAbbr) return null;
+    return [awayAbbr, homeAbbr].map(ab => ({ side: ab, team: teamName(ab), label: 'ML' }));
   }
-  const spread = computeSpread(leg.sport, g);
-  if (spread === null) return null;
-  const favSide = spread <= 0 ? g.home : g.away;
-  const magnitude = Math.abs(spread);
+  let favSide, magnitude;
+  if (g) {
+    const spread = computeSpread(leg.sport, g);
+    if (spread === null) return null;
+    favSide = spread <= 0 ? g.home : g.away;
+    magnitude = Math.abs(spread);
+  } else if (leg.spreadFavSide !== undefined && leg.spreadMagnitude !== undefined) {
+    favSide = leg.spreadFavSide;
+    magnitude = leg.spreadMagnitude;
+  } else {
+    return null;
+  }
+  if (!awayAbbr || !homeAbbr) return null;
   const favLabel = magnitude === 0 ? 'PK' : '-' + magnitude;
   const udLabel = magnitude === 0 ? 'PK' : '+' + magnitude;
-  return [g.away, g.home].map(ab => ({ side: ab, team: fullTeamName(g.id, ab), label: ab === favSide ? favLabel : udLabel }));
+  return [awayAbbr, homeAbbr].map(ab => ({ side: ab, team: teamName(ab), label: ab === favSide ? favLabel : udLabel }));
 }
 function poolAnyGameStarted(pool) {
   return pool.legs.some(leg => {
@@ -3726,14 +3770,21 @@ function renderPoolCard(pool) {
       const legLabel = leg.betType === 'total' ? 'Total' : leg.betType === 'moneyline' ? 'Moneyline' : leg.betType === 'golf_h2h' ? 'Head-to-Head' : leg.betType === 'playerprop' ? `${leg.playerName} \u2014 ${(PLAYER_PROP_CATEGORIES.find(c => c.id === leg.statCategory) || {}).label || leg.statCategory} (${leg.line})` : 'Spread';
       const myPick = myEntry ? myEntry.picks.find(p => p.gameId === leg.gameId && p.betType === leg.betType && (leg.betType !== 'playerprop' || (p.playerName === leg.playerName && p.statCategory === leg.statCategory))) : null;
       let myPickText = '';
+      let outcomeTag = '';
       if (myPick) {
         const opts = poolLegSideOptions(leg);
         const chosenOpt = opts ? opts.find(o => o.side === myPick.sideAbbr) : null;
         const pickLabel = chosenOpt ? `${chosenOpt.team} ${chosenOpt.label}` : myPick.sideAbbr;
         myPickText = ` \u2014 you: ${pickLabel} (${myPick.confUnits}u)`;
+        if (pool.status === 'settled') {
+          const outcome = legPickOutcome(pool, leg, myPick);
+          if (outcome === 'win') outcomeTag = ` <span style="color:#4CAF50;font-weight:800;">\u2713 Hit</span>`;
+          else if (outcome === 'loss') outcomeTag = ` <span style="color:var(--danger);font-weight:800;">\u2717 Miss</span>`;
+          else if (outcome === 'push') outcomeTag = ` <span style="color:var(--text-faint);font-weight:800;">Push</span>`;
+        }
       }
       const row = el('div'); row.style.cssText = 'font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);';
-      row.innerHTML = `<span style="font-weight:700;">${leg.gameLabel}</span> <span style="color:var(--text-faint);">\u2014 ${legLabel}</span>${myPickText ? `<span style="color:var(--accent);font-weight:700;">${myPickText}</span>` : ''}`;
+      row.innerHTML = `<span style="font-weight:700;">${leg.gameLabel}</span> <span style="color:var(--text-faint);">\u2014 ${legLabel}</span>${myPickText ? `<span style="color:var(--accent);font-weight:700;">${myPickText}</span>${outcomeTag}` : ''}`;
       legsWrap.appendChild(row);
     });
     card.appendChild(legsWrap);
