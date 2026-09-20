@@ -312,9 +312,13 @@ async function refreshGameLists() {
   return changed;
 }
 
+function isMidPoolBuild() {
+  const golfMeta = LEAGUES_META.find(l => l.isGolf);
+  return poolsActiveTab === 'create' && !(golfMeta && poolCreateSport === golfMeta.id);
+}
 let liveTimer = null;
 function startLiveScoreChecks() {
-  refreshGameLists().then(async () => { await persistNewlySettledPicks(); await persistNewlySettledWeeklyBets(); await persistNewlySettledPlayerProps(); await persistNewlySettledGolfH2H(); await ensurePoolPlayerPropBoxScores(); await persistNewlySettledComboPool(); await persistNewlySettledGolfTeamPool(); await persistAccountAdjustmentsForChallenges(); if (profile) render(); });
+  refreshGameLists().then(async () => { await persistNewlySettledPicks(); await persistNewlySettledWeeklyBets(); await persistNewlySettledPlayerProps(); await persistNewlySettledGolfH2H(); await ensurePoolPlayerPropBoxScores(); await persistNewlySettledComboPool(); await persistNewlySettledGolfTeamPool(); await persistAccountAdjustmentsForChallenges(); if (profile && !isMidPoolBuild()) render(); });
   if (liveTimer) return;
   liveTimer = setInterval(async () => {
     if (pendingSaveCount > 0) return; // don't rebuild the screen while a bet is mid-save
@@ -327,7 +331,7 @@ function startLiveScoreChecks() {
     const settledF = await persistNewlySettledComboPool();
     const settledG = await persistNewlySettledGolfTeamPool();
     const settledE = await persistAccountAdjustmentsForChallenges();
-    if (profile && (dataChanged || settledA || settledB || settledC || settledD || settledE || settledF || settledG)) render();
+    if (profile && !isMidPoolBuild() && (dataChanged || settledA || settledB || settledC || settledD || settledE || settledF || settledG)) render();
   }, 60000);
 }
 
@@ -808,7 +812,7 @@ function startPolling() {
       }
       if (data.dailySlate && JSON.stringify(data.dailySlate) !== JSON.stringify(dailySlateData)) { dailySlateData = data.dailySlate; changed = true; }
       const friendSynced = await syncAcceptedFriendRequests();
-      if ((changed || friendSynced) && profile) render();
+      if ((changed || friendSynced) && profile && !isMidPoolBuild()) render();
     } catch (e) { /* ignore transient poll errors */ }
   }, 8000);
 }
@@ -3986,7 +3990,7 @@ function renderGolfTeamPoolBuilder(field) {
 
   if (golfTeamBuilderStep <= 4) {
     const tierNum = golfTeamBuilderStep;
-    wrap.appendChild(el('div', 'setup-hint', `Build your draft board. Select every player you want in Tier ${tierNum}, then submit — whoever's left over after Tier 4 automatically becomes Tier 5. Everyone who joins will pick one player from each tier, plus a wild card from any tier. Players below are listed alphabetically — no free public source for OWGR or tour standings exists to sort by.`));
+    wrap.appendChild(el('div', 'setup-hint', `Build your draft board. Select every player you want in Tier ${tierNum}, then submit — whoever's left over after Tier 4 automatically becomes Tier 5. Everyone who joins will pick one player from each tier, plus a wild card from any tier.`));
 
     for (let t = 0; t < tierNum - 1; t++) {
       if (!golfTeamBuilderTiers[t].length) continue;
