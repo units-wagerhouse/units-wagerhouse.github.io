@@ -403,6 +403,7 @@ let golfTeamBuilderName = '';
 let golfTeamBuilderVisibility = 'public';
 let golfTeamBuilderPaid = 1;
 let golfTeamJoinPicks = {}; // 'tier1'..'tier5','wild' -> player name
+let golfTierListScroll = 0;
 let dailyPoolSwipedAway = false; // session-only skip, since the daily pool isn't a record you can permanently decline
 let poolJoinedListOpen = {}; // poolId -> bool
 let poolLegsListOpen = {}; // poolId -> bool
@@ -3981,10 +3982,14 @@ function assignedGolfPlayerNames() {
 const GOLF_TIER_COLORS = ['#FFD700', '#C0C0C0', '#CD7F32', '#4A90D9', '#9B59B6'];
 function renderGolfTeamPoolBuilder(field) {
   const wrap = el('div');
+  if (!golfFedExAttempted) { fetchGolfFedExRankings().then(() => render()); }
 
   if (golfTeamBuilderStep <= 4) {
     const tierNum = golfTeamBuilderStep;
     wrap.appendChild(el('div', 'setup-hint', `Build your draft board. Select every player you want in Tier ${tierNum}, then submit — whoever's left over after Tier 4 automatically becomes Tier 5. Everyone who joins will pick one player from each tier, plus a wild card from any tier.`));
+    if (golfFedExRankMap) {
+      wrap.appendChild(el('div', 'setup-hint', 'Players are sorted by current FedEx Cup standing (not official world ranking, which has no free public source) — use it as a rough guide, not gospel.'));
+    }
 
     for (let t = 0; t < tierNum - 1; t++) {
       if (!golfTeamBuilderTiers[t].length) continue;
@@ -4006,9 +4011,10 @@ function renderGolfTeamPoolBuilder(field) {
       wrap.appendChild(el('div', 'empty', 'No players left to assign — go back or reset if you want to redo a tier.'));
     } else {
       const listWrap = el('div');
+      listWrap.id = 'golf-tier-list';
       listWrap.style.cssText = 'max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px;';
       golfPlayersSortedByRank(candidatePool).forEach(p => {
-        const rank = p.rank;
+        const rank = (p.rank !== null && p.rank !== undefined) ? p.rank : (golfFedExRankMap ? golfFedExRankMap[p.name.toLowerCase()] : undefined);
         const selected = golfTeamBuilderTiers[tierNum-1].includes(p.name);
         const row = el('div', 'pick-row');
         row.style.cssText = 'margin-top:4px;cursor:pointer;' + (selected ? `border-color:${GOLF_TIER_COLORS[tierNum-1]};background:${GOLF_TIER_COLORS[tierNum-1]}22;` : '');
@@ -4017,6 +4023,8 @@ function renderGolfTeamPoolBuilder(field) {
         check.style.cssText = `color:${GOLF_TIER_COLORS[tierNum-1]};font-weight:900;font-size:16px;`;
         row.appendChild(check);
         row.onclick = () => {
+          const existing = document.getElementById('golf-tier-list');
+          golfTierListScroll = existing ? existing.scrollTop : 0;
           const tier = golfTeamBuilderTiers[tierNum-1];
           const idx = tier.indexOf(p.name);
           if (idx === -1) tier.push(p.name); else tier.splice(idx, 1);
@@ -4025,13 +4033,14 @@ function renderGolfTeamPoolBuilder(field) {
         listWrap.appendChild(row);
       });
       wrap.appendChild(listWrap);
+      requestAnimationFrame(() => { if (listWrap.isConnected) listWrap.scrollTop = golfTierListScroll; });
     }
 
     const btnRow = el('div'); btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
     if (tierNum > 1) {
       const backBtn = el('button', null, '\u2190 Back');
       backBtn.style.cssText = 'flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:10px 16px;font-size:13px;font-weight:700;';
-      backBtn.onclick = () => { golfTeamBuilderStep--; render(); };
+      backBtn.onclick = () => { golfTeamBuilderStep--; golfTierListScroll = 0; render(); };
       btnRow.appendChild(backBtn);
     }
     const nextBtn = el('button', null, tierNum < 4 ? `Submit Tier ${tierNum} \u2192` : 'Submit Tier 4 \u2192 Auto-fill Tier 5');
@@ -4044,6 +4053,7 @@ function renderGolfTeamPoolBuilder(field) {
         golfTeamBuilderTiers[4] = field.players.filter(p => !assignedNow.has(p.name)).map(p => p.name);
       }
       golfTeamBuilderStep++;
+      golfTierListScroll = 0;
       render();
     };
     btnRow.appendChild(nextBtn);
@@ -4053,7 +4063,7 @@ function renderGolfTeamPoolBuilder(field) {
     resetBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
     resetBtn.onclick = () => {
       if (!confirm('Clear all tiers and start the draft board over?')) return;
-      golfTeamBuilderStep = 1; golfTeamBuilderTiers = [[], [], [], [], []];
+      golfTeamBuilderStep = 1; golfTeamBuilderTiers = [[], [], [], [], []]; golfTierListScroll = 0;
       render();
     };
     wrap.appendChild(resetBtn);
@@ -6752,11 +6762,51 @@ async function persistNewlySettledPlayerProps() {
 let golfFieldCache = null; // { tournamentId, tournamentName, completed, players: [{id, name, score}] } | null
 let golfFieldAttempted = false;
 let golfFieldCacheTime = 0;
+// FedEx Cup standings (NOT OWGR/world ranking — the free public ESPN API has no confirmed OWGR source; this is
+// a PGA-Tour-only season points race, used here purely as a "who's currently performing well" sort proxy).
+// The exact URL/shape is inferred from ESPN's equivalent NFL endpoint, not confirmed for golf — built
+// defensively so a wrong guess just fails soft to alphabetical rather than breaking anything.
+let golfFedExRankMap = null; // name(lowercase) -> FedEx Cup standing position, or null if fetch/shape didn't work
+let golfFedExAttempted = false;
+async function fetchGolfFedExRankings() {
+  if (golfFedExAttempted) return golfFedExRankMap;
+  golfFedExAttempted = true;
+  try {
+    const year = new Date().getFullYear();
+    const res = await fetch(`https://sports.core.api.espn.com/v2/sports/golf/leagues/pga/seasons/${year}/types/2/leaders?limit=200`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const categories = json.categories || json.items || [];
+    const cat = categories.find(c => /fedex/i.test(c.name || '') || /fedex/i.test(c.displayName || '')) ||
+                categories.find(c => /scoring ?average/i.test(c.displayName || c.name || ''));
+    const leaders = (cat && (cat.leaders || cat.athletes)) || [];
+    if (!leaders.length) return null;
+    // Each leader entry is a $ref link to an athlete — resolve them in parallel to get names.
+    const resolved = await Promise.all(leaders.slice(0, 200).map(async (entry, i) => {
+      try {
+        const ref = entry.athlete && entry.athlete.$ref;
+        if (!ref) return null;
+        const ar = await fetch(ref);
+        if (!ar.ok) return null;
+        const aj = await ar.json();
+        const name = aj.displayName || aj.shortName || aj.fullName;
+        return name ? { name, rank: i + 1 } : null;
+      } catch (e) { return null; }
+    }));
+    const map = {};
+    resolved.forEach(r => { if (r) map[r.name.toLowerCase()] = r.rank; });
+    if (!Object.keys(map).length) return null;
+    golfFedExRankMap = map;
+    return golfFedExRankMap;
+  } catch (e) { return null; } // guessed URL/shape didn't pan out — fails soft, alphabetical stays the fallback
+}
 function golfPlayersSortedByRank(players) {
   return players.slice().sort((a,b) => {
-    if (a.rank !== null && b.rank !== null) return a.rank - b.rank;
-    if (a.rank !== null) return -1;
-    if (b.rank !== null) return 1;
+    const ra = (a.rank !== null && a.rank !== undefined) ? a.rank : (golfFedExRankMap ? golfFedExRankMap[a.name.toLowerCase()] : undefined);
+    const rb = (b.rank !== null && b.rank !== undefined) ? b.rank : (golfFedExRankMap ? golfFedExRankMap[b.name.toLowerCase()] : undefined);
+    if (ra !== undefined && rb !== undefined) return ra - rb;
+    if (ra !== undefined) return -1;
+    if (rb !== undefined) return 1;
     return a.name.localeCompare(b.name);
   });
 }
