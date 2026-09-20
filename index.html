@@ -307,12 +307,14 @@ async function refreshGameLists() {
   }));
   rebuildGameIndex();
   gamesLoaded = true;
-  return JSON.stringify(DATA) !== before;
+  const changed = JSON.stringify(DATA) !== before;
+  if (changed) { cachedDailyPool = null; cachedDailyPoolKey = null; }
+  return changed;
 }
 
 let liveTimer = null;
 function startLiveScoreChecks() {
-  refreshGameLists().then(async () => { await persistNewlySettledPicks(); await persistNewlySettledWeeklyBets(); await persistNewlySettledPlayerProps(); await persistNewlySettledGolfH2H(); await ensurePoolPlayerPropBoxScores(); await persistNewlySettledComboPool(); await persistAccountAdjustmentsForChallenges(); if (profile) render(); });
+  refreshGameLists().then(async () => { await persistNewlySettledPicks(); await persistNewlySettledWeeklyBets(); await persistNewlySettledPlayerProps(); await persistNewlySettledGolfH2H(); await ensurePoolPlayerPropBoxScores(); await persistNewlySettledComboPool(); await persistNewlySettledGolfTeamPool(); await persistAccountAdjustmentsForChallenges(); if (profile) render(); });
   if (liveTimer) return;
   liveTimer = setInterval(async () => {
     if (pendingSaveCount > 0) return; // don't rebuild the screen while a bet is mid-save
@@ -323,8 +325,9 @@ function startLiveScoreChecks() {
     const settledD = await persistNewlySettledGolfH2H();
     await ensurePoolPlayerPropBoxScores();
     const settledF = await persistNewlySettledComboPool();
+    const settledG = await persistNewlySettledGolfTeamPool();
     const settledE = await persistAccountAdjustmentsForChallenges();
-    if (profile && (dataChanged || settledA || settledB || settledC || settledD || settledE || settledF)) render();
+    if (profile && (dataChanged || settledA || settledB || settledC || settledD || settledE || settledF || settledG)) render();
   }, 60000);
 }
 
@@ -392,6 +395,13 @@ let poolSwipeCart = [];
 let poolSwipeStackInitialized = false;
 let poolBrowseMode = 'swipe'; // 'swipe' | 'cart'
 let poolInvitesView = 'received'; // 'received' | 'sent'
+let golfPoolMode = 'h2h'; // 'h2h' | 'team'
+let golfTeamBuilderStep = 1; // 1-4 while assigning tiers, 5 = review/create
+let golfTeamBuilderTiers = [[], [], [], [], []]; // player names per tier, tier 5 auto-fills
+let golfTeamBuilderName = '';
+let golfTeamBuilderVisibility = 'public';
+let golfTeamBuilderPaid = 1;
+let golfTeamJoinPicks = {}; // 'tier1'..'tier5','wild' -> player name
 let dailyPoolSwipedAway = false; // session-only skip, since the daily pool isn't a record you can permanently decline
 let poolJoinedListOpen = {}; // poolId -> bool
 let poolLegsListOpen = {}; // poolId -> bool
@@ -823,8 +833,12 @@ function render() {
     }
   }
 }
+let lastNavKey = null;
 function renderInner() {
-  const scrollY = window.scrollY;
+  const navKey = JSON.stringify([appSection, activeTab, poolsActiveTab, existingChallengeView, poolInvitesView, challengeBrowseMode, poolBrowseMode]);
+  const isNavigation = lastNavKey !== null && lastNavKey !== navKey;
+  lastNavKey = navKey;
+  const scrollY = isNavigation ? 0 : window.scrollY;
   renderMenu();
   renderSectionSwitch();
   const main = document.getElementById('main');
@@ -1889,16 +1903,40 @@ function computeDailySlateLocal(dayKey) {
   }
   return shuffled.slice(0, 5);
 }
+function legHasLiveOdds(o) {
+  const g = (DATA[o.sport] || []).find(x => x.id === o.gameId);
+  if (!g) return false;
+  if (o.betType === 'total') return g.overUnder !== null && g.overUnder !== undefined;
+  if (o.betType === 'spread') return computeSpread(o.sport, g) !== null;
+  return true;
+}
 function dailyBaseSlate() {
   const dayKey = houseDayKey(new Date());
-  if (dailySlateData && dailySlateData.dayKey === dayKey) return dailySlateData.slate;
-  const slate = computeDailySlateLocal(dayKey);
-  if (!slate) return null;
-  // Persist as the one shared slate everyone reads — first person to load today "wins" and writes it; everyone
-  // else (including this device on future loads) reads that same saved value instead of recomputing their own.
-  dailySlateData = { dayKey, slate };
-  fsPatch({ dailySlate: dailySlateData }).catch(() => { /* best-effort; next load will retry if this failed */ });
-  return slate;
+  let slate = null;
+  if (dailySlateData && dailySlateData.dayKey === dayKey) {
+    slate = dailySlateData.slate;
+  } else {
+    slate = computeDailySlateLocal(dayKey);
+    if (!slate) return null;
+  }
+  // Self-heal: a leg can end up without live odds if the slate was locked in before that game's odds
+  // finished loading. Swap any such leg for a fresh valid candidate not already in the slate.
+  const usedIds = new Set(slate.map(o => o.gameId));
+  let healed = false;
+  const healedSlate = slate.map(o => {
+    if (legHasLiveOdds(o)) return o;
+    const pool = dailyOptionPool();
+    const replacement = pool.find(c => !usedIds.has(c.gameId) && legHasLiveOdds(c));
+    if (!replacement) return o; // nothing better available yet — leave as-is
+    usedIds.add(replacement.gameId);
+    healed = true;
+    return replacement;
+  });
+  dailySlateData = { dayKey, slate: healedSlate };
+  if (healed || !slate) {
+    fsPatch({ dailySlate: dailySlateData }).catch(() => { /* best-effort; next load will retry if this failed */ });
+  }
+  return healedSlate;
 }
 function mulliganFor(name, dayKey) {
   return allPicks.find(p => p.poolType === 'mulligan' && p.player === name && p.dayKey === dayKey);
@@ -1968,6 +2006,11 @@ function weeklyAllSettled(name, wk) {
 }
 function allWeekKeysFor(name) {
   return [...new Set(allPicks.filter(p => p.player === name && p.poolType === 'weekly').map(p => p.weekKey))].sort();
+}
+function houseAllTimeLeaderboard() {
+  const names = players.length ? players.slice() : [];
+  if (profile && !names.includes(profile.name)) names.push(profile.name);
+  return names.map(n => ({ name: n, total: totalUnitsWon(n) })).sort((a,b) => b.total - a.total);
 }
 function totalUnitsWon(name) {
   return allWeekKeysFor(name).reduce((s,wk) => weeklyAllSettled(name, wk) ? s + weeklyNetUnits(name, wk) : s, 0);
@@ -2237,7 +2280,7 @@ function renderPoolTabs() {
   bar.innerHTML = '';
   bar.className = 'league-scroller';
   if (!profile) return;
-  const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
+  const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && (p.propType === 'combo_pool' || p.propType === 'golf_team'));
   const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
   const declinedIds0 = declinedPoolIdsFor(profile.name);
   const cartIds0 = cartPoolIdsFor(profile.name);
@@ -2255,7 +2298,7 @@ function renderPoolTabs() {
 function renderPoolsSection() {
   const wrap = el('div');
 
-  const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool');
+  const allPools0 = allPicks.filter(p => p.poolType === 'challenge' && (p.propType === 'combo_pool' || p.propType === 'golf_team'));
   const friendNames0 = new Set((profile.friends || []).map(f => f.name));
   const dailyPoolDone = weeklyRemaining(profile.name, houseDayKey(new Date())) === 0;
 
@@ -2348,7 +2391,9 @@ function renderPoolsSection() {
 
     const timesPlaced = filteredCompleted.filter(p => (p.payouts || []).some(po => po.name === profile.name && po.placed)).length;
     const placementPct = filteredCompleted.length ? (timesPlaced / filteredCompleted.length * 100) : 0;
-    const totalGames = filteredCompleted.reduce((s,p) => s + p.legs.length, 0);
+    const houseBoard = houseAllTimeLeaderboard();
+    const houseRankIdx = houseBoard.findIndex(r => r.name === profile.name);
+    const houseRankTxt = houseRankIdx >= 0 ? `#${houseRankIdx + 1} of ${houseBoard.length}` : '\u2014';
 
     const banner2 = el('div', 'rank-banner');
     banner2.style.marginTop = '5px';
@@ -2365,8 +2410,8 @@ function renderPoolsSection() {
     p3.appendChild(el('div', 'rc-value', placementPct.toFixed(0) + '%'));
     banner2.appendChild(p3);
     const p4 = el('div', 'rank-cell');
-    p4.appendChild(el('div', 'rc-label', 'Total games'));
-    p4.appendChild(el('div', 'rc-value', String(totalGames)));
+    p4.appendChild(el('div', 'rc-label', 'House Pool<br>Rank'));
+    p4.appendChild(el('div', 'rc-value', houseRankTxt));
     banner2.appendChild(p4);
     wrap.appendChild(banner2);
 
@@ -3114,8 +3159,9 @@ function renderPoolBuilder() {
   function rebuildGameOptions() {
     const sport = leagueSel.value;
     gameSel.innerHTML = '';
-    const games = (DATA[sport] || []).filter(g => g.status === 'scheduled');
-    if (!games.length) { const o = document.createElement('option'); o.value = ''; o.textContent = 'No upcoming games'; gameSel.appendChild(o); }
+    const todayKey = houseDayKey(new Date());
+    const games = (DATA[sport] || []).filter(g => g.status === 'scheduled' && houseDayKey(new Date(g.start)) === todayKey);
+    if (!games.length) { const o = document.createElement('option'); o.value = ''; o.textContent = 'No games today'; gameSel.appendChild(o); }
     games.slice().sort((a,b) => new Date(a.start) - new Date(b.start)).forEach(g => {
       const o = document.createElement('option'); o.value = g.id;
       o.textContent = `${fullTeamName2(sport, g, g.away)} @ ${fullTeamName2(sport, g, g.home)}`;
@@ -3353,7 +3399,182 @@ function poolParticipantScore(pool, participant) {
   });
   return { total, allSettled };
 }
+function computeGolfTeamParticipantScore(pool, participant) {
+  const field = (golfFieldCache && golfFieldCache.tournamentId === pool.tournamentId) ? golfFieldCache : null;
+  if (!field) return { total: null, allSettled: false, breakdown: [] };
+  const madeCutScores = field.players.filter(p => !p.missedCut && p.score !== null).map(p => p.score);
+  const worstMadeCutScore = madeCutScores.length ? Math.max(...madeCutScores) : null;
+  const picks = participant.picks || [];
+  const breakdown = [];
+  let allSettled = field.completed;
+  for (const name of picks) {
+    const fp = field.players.find(p => p.name === name);
+    if (!fp || fp.score === null) { breakdown.push({ name, score: null }); allSettled = false; continue; }
+    if (fp.missedCut) {
+      breakdown.push({ name, score: worstMadeCutScore, missedCut: true });
+    } else {
+      breakdown.push({ name, score: fp.score });
+    }
+  }
+  if (breakdown.some(b => b.score === null)) return { total: null, allSettled: false, breakdown };
+  const sorted = breakdown.slice().sort((a,b) => a.score - b.score); // best (lowest) first
+  const best5 = sorted.slice(0, 5);
+  const total = best5.reduce((s,b) => s + b.score, 0);
+  return { total, allSettled, breakdown, best5Names: new Set(best5.map(b => b.name)) };
+}
+function renderGolfTeamPoolCard(pool) {
+  const card = el('div', 'event-card');
+  const isCreator = pool.creator === profile.name;
+  const participants = pool.participants || [];
+  const myEntry = participants.find(p => p.name === profile.name);
+  if (pool.status === 'settled' && myEntry) {
+    const payout = (pool.payouts || []).find(po => po.name === profile.name);
+    const won = !!(payout && payout.placed);
+    card.style.borderColor = won ? '#4CAF50' : 'var(--danger)';
+    card.style.background = won ? 'rgba(76, 175, 80, 0.08)' : 'rgba(239, 59, 59, 0.08)';
+  }
+  card.appendChild(el('div', null, pool.name || pool.gameLabel)).style.cssText = 'font-size:13.5px;font-weight:700;margin-bottom:4px;';
+  const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 ' + (pool.targetFriend || 'Individual'));
+  card.appendChild(el('div', null, `Golf Draft \u00b7 top ${pool.paidPositions} paid \u00b7 Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
+
+  if (pool.status === 'settled') {
+    card.appendChild(el('div', 'no-odds-note', 'Pool settled \u2014 tournament finished.'));
+  } else if (myEntry) {
+    card.appendChild(el('div', 'no-odds-note', "You're in \u2014 waiting for the tournament to finish."));
+    card.appendChild(el('div', null, `Your picks: ${(myEntry.picks || []).join(', ')}`)).style.cssText = 'font-size:11px;color:var(--text-dim);margin-top:4px;';
+  } else if (pool.status === 'open') {
+    card.appendChild(renderGolfTeamJoinForm(pool));
+  }
+
+  const joinedOpen = !!poolJoinedListOpen[pool.id];
+  const joinedHeader = el('div', null, `${joinedOpen ? '\u25be' : '\u25b8'} Leaderboard (${participants.length})`);
+  joinedHeader.style.cssText = 'font-size:11px;font-weight:700;color:var(--text-dim);cursor:pointer;margin-top:10px;border-top:1px solid var(--border);padding-top:8px;';
+  joinedHeader.onclick = () => { poolJoinedListOpen[pool.id] = !joinedOpen; render(); };
+  card.appendChild(joinedHeader);
+  if (joinedOpen) {
+    if (!participants.length) {
+      card.appendChild(el('div', 'empty', 'No one has joined yet.'));
+    } else {
+      const scored = participants.map(p => ({ name: p.name, ...computeGolfTeamParticipantScore(pool, p) }));
+      scored.sort((a,b) => {
+        if (a.total === null) return 1;
+        if (b.total === null) return -1;
+        return a.total - b.total; // lower golf score is better
+      });
+      const listWrap = el('div'); listWrap.style.marginTop = '6px';
+      scored.forEach((s, i) => {
+        const row = el('div'); row.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:3px 0;';
+        const scoreTxt = s.total === null ? 'pending' : (s.total > 0 ? '+' + s.total : String(s.total)) + (s.allSettled ? '' : ' (live)');
+        row.innerHTML = `<span>${i + 1}. ${s.name}${s.name === profile.name ? ' (you)' : ''}</span><span style="font-weight:700;">${scoreTxt}</span>`;
+        listWrap.appendChild(row);
+      });
+      card.appendChild(listWrap);
+    }
+  }
+
+  const tiersOpen = !!poolLegsListOpen[pool.id];
+  const tiersHeader = el('div', null, `${tiersOpen ? '\u25be' : '\u25b8'} Draft Tiers`);
+  tiersHeader.style.cssText = 'font-size:11px;font-weight:700;color:var(--text-dim);cursor:pointer;margin-top:10px;border-top:1px solid var(--border);padding-top:8px;';
+  tiersHeader.onclick = () => { poolLegsListOpen[pool.id] = !tiersOpen; render(); };
+  card.appendChild(tiersHeader);
+  if (tiersOpen) {
+    const tiersWrap = el('div'); tiersWrap.style.cssText = 'margin-top:6px;';
+    (pool.tiers || []).forEach((tier, i) => {
+      const row = el('div'); row.style.cssText = 'font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);';
+      row.innerHTML = `<span style="font-weight:700;">Tier ${i+1}</span> <span style="color:var(--text-faint);">${tier.join(', ')}</span>`;
+      tiersWrap.appendChild(row);
+    });
+    card.appendChild(tiersWrap);
+  }
+
+  card.appendChild(renderPoolCommentsSection(pool));
+
+  if (myEntry && pool.status !== 'settled') {
+    const leaveBtn = el('button', null, 'Leave Pool');
+    leaveBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:8px;font-size:12px;font-weight:700;';
+    leaveBtn.onclick = async () => {
+      if (!confirm('Leave this pool?')) return;
+      leaveBtn.disabled = true; leaveBtn.textContent = 'Leaving…';
+      const idx = allPicks.findIndex(p => p.id === pool.id);
+      if (idx === -1) return;
+      const before = JSON.parse(JSON.stringify(allPicks[idx]));
+      allPicks[idx].participants = (allPicks[idx].participants || []).filter(p => p.name !== profile.name);
+      try { await savePicks(allPicks); render(); }
+      catch (e) {
+        allPicks[idx] = before;
+        alert("Couldn't leave (" + describeFetchError(e) + ") — try again.");
+        leaveBtn.disabled = false; leaveBtn.textContent = 'Leave Pool';
+      }
+    };
+    card.appendChild(leaveBtn);
+  }
+
+  if (isCreator && pool.status === 'open') {
+    const delBtn = el('button', null, '\u2715 Delete this pool');
+    delBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
+    delBtn.onclick = async () => {
+      if (participants.length) { alert("Can't delete a pool once someone has joined."); return; }
+      if (!confirm('Delete this pool permanently?')) return;
+      const idx = allPicks.findIndex(p => p.id === pool.id);
+      if (idx === -1) return;
+      const removed = allPicks.splice(idx, 1)[0];
+      try { await savePicks(allPicks); render(); }
+      catch (e) { allPicks.splice(idx, 0, removed); alert("Couldn't delete (" + describeFetchError(e) + ") — try again."); }
+    };
+    card.appendChild(delBtn);
+  }
+  return card;
+}
+function renderGolfTeamJoinForm(pool) {
+  const wrap = el('div', 'bet-slip');
+  wrap.appendChild(el('div', null, 'Draft Your Team')).style.cssText = 'font-size:13px;font-weight:800;margin-bottom:6px;';
+  wrap.appendChild(el('div', 'setup-hint', 'One player from each tier, plus one wild card from anywhere.'));
+
+  const keys = ['tier1','tier2','tier3','tier4','tier5','wild'];
+  const labels = ['Tier 1', 'Tier 2', 'Tier 3', 'Tier 4', 'Tier 5', 'Wild Card (any tier)'];
+  keys.forEach((key, i) => {
+    wrap.appendChild(el('label', null, labels[i]));
+    const sel = el('select');
+    sel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+    const blank = document.createElement('option'); blank.value = ''; blank.textContent = 'Select a player…'; sel.appendChild(blank);
+    const options = key === 'wild' ? (pool.tiers || []).flat() : (pool.tiers && pool.tiers[i]) || [];
+    options.slice().sort().forEach(name => { const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o); });
+    if (golfTeamJoinPicks[key]) sel.value = golfTeamJoinPicks[key];
+    sel.onchange = () => { golfTeamJoinPicks[key] = sel.value; };
+    wrap.appendChild(sel);
+  });
+
+  const joinBtn = el('button', 'lock-btn', 'Join Pool');
+  wrap.appendChild(joinBtn);
+  const errEl = el('div', 'pick-error');
+  wrap.appendChild(errEl);
+
+  joinBtn.onclick = async () => {
+    errEl.textContent = '';
+    const picks = keys.map(k => golfTeamJoinPicks[k]);
+    if (picks.some(p => !p)) { errEl.textContent = 'Pick a player for every tier and the wild card.'; return; }
+    joinBtn.disabled = true; joinBtn.textContent = 'Joining…';
+    const idx = allPicks.findIndex(p => p.id === pool.id);
+    if (idx === -1) { errEl.textContent = 'Pool no longer exists.'; joinBtn.disabled = false; joinBtn.textContent = 'Join Pool'; return; }
+    if (!allPicks[idx].participants) allPicks[idx].participants = [];
+    allPicks[idx].participants.push({ name: profile.name, uid: profile.uid, picks, joinedAt: new Date().toISOString() });
+    try {
+      await savePicks(allPicks);
+      golfTeamJoinPicks = {};
+      poolSwipeCart = poolSwipeCart.filter(p => p.id !== pool.id);
+      recordPoolSwipeCartRemove(pool.id);
+      render();
+    } catch (e) {
+      allPicks[idx].participants.pop();
+      errEl.textContent = "Couldn't join (" + describeFetchError(e) + ") — try again.";
+      joinBtn.disabled = false; joinBtn.textContent = 'Join Pool';
+    }
+  };
+  return wrap;
+}
+
 function renderPoolCard(pool) {
+  if (pool.propType === 'golf_team') return renderGolfTeamPoolCard(pool);
   const card = el('div', 'event-card');
   const isCreator = pool.creator === profile.name;
   const participants = pool.participants || [];
@@ -3607,9 +3828,154 @@ function getGolfDraft(tournamentId) {
   if (!golfDraftStore[tournamentId]) golfDraftStore[tournamentId] = { playerA: '', playerB: '', chosenPlayer: null, round: 'total', oddsMultiplier: 1, units: '1', visibility: '' };
   return golfDraftStore[tournamentId];
 }
+function assignedGolfPlayerNames() {
+  const s = new Set();
+  golfTeamBuilderTiers.forEach(tier => tier.forEach(n => s.add(n)));
+  return s;
+}
+function renderGolfTeamPoolBuilder(field) {
+  const wrap = el('div');
+
+  if (golfTeamBuilderStep <= 4) {
+    const tierNum = golfTeamBuilderStep;
+    wrap.appendChild(el('div', 'setup-hint', `Build your draft board. Select every player you want in Tier ${tierNum}, then submit — whoever's left over after Tier 4 automatically becomes Tier 5. Everyone who joins will pick one player from each tier, plus a wild card from any tier.`));
+    wrap.appendChild(el('div', null, `Tier ${tierNum} (${golfTeamBuilderTiers[tierNum-1].length} selected)`)).style.cssText = 'font-size:14px;font-weight:800;margin:8px 0 6px;';
+
+    const assigned = assignedGolfPlayerNames();
+    const remaining = field.players.filter(p => !assigned.has(p.name));
+    if (!remaining.length) {
+      wrap.appendChild(el('div', 'empty', 'No players left to assign — go back or reset if you want to redo a tier.'));
+    } else {
+      const listWrap = el('div');
+      listWrap.style.cssText = 'max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px;';
+      remaining.slice().sort((a,b) => a.name.localeCompare(b.name)).forEach(p => {
+        const selected = golfTeamBuilderTiers[tierNum-1].includes(p.name);
+        const row = el('div', 'pick-row');
+        row.style.cssText = 'margin-top:4px;cursor:pointer;' + (selected ? 'border-color:var(--accent);' : '');
+        row.innerHTML = `<div class="who">${p.name}</div>`;
+        const check = el('div', null, selected ? '\u2713' : '');
+        check.style.cssText = 'color:var(--accent);font-weight:900;font-size:16px;';
+        row.appendChild(check);
+        row.onclick = () => {
+          const tier = golfTeamBuilderTiers[tierNum-1];
+          const idx = tier.indexOf(p.name);
+          if (idx === -1) tier.push(p.name); else tier.splice(idx, 1);
+          render();
+        };
+        listWrap.appendChild(row);
+      });
+      wrap.appendChild(listWrap);
+    }
+
+    const btnRow = el('div'); btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+    if (tierNum > 1) {
+      const backBtn = el('button', null, '\u2190 Back');
+      backBtn.style.cssText = 'flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:10px 16px;font-size:13px;font-weight:700;';
+      backBtn.onclick = () => { golfTeamBuilderStep--; render(); };
+      btnRow.appendChild(backBtn);
+    }
+    const nextBtn = el('button', null, tierNum < 4 ? `Submit Tier ${tierNum} \u2192` : 'Submit Tier 4 \u2192 Auto-fill Tier 5');
+    nextBtn.className = 'lock-btn';
+    nextBtn.style.flex = '1';
+    nextBtn.disabled = golfTeamBuilderTiers[tierNum-1].length === 0;
+    nextBtn.onclick = () => {
+      if (tierNum === 4) {
+        const assignedNow = assignedGolfPlayerNames();
+        golfTeamBuilderTiers[4] = field.players.filter(p => !assignedNow.has(p.name)).map(p => p.name);
+      }
+      golfTeamBuilderStep++;
+      render();
+    };
+    btnRow.appendChild(nextBtn);
+    wrap.appendChild(btnRow);
+
+    const resetBtn = el('button', null, 'Start Over');
+    resetBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
+    resetBtn.onclick = () => {
+      if (!confirm('Clear all tiers and start the draft board over?')) return;
+      golfTeamBuilderStep = 1; golfTeamBuilderTiers = [[], [], [], [], []];
+      render();
+    };
+    wrap.appendChild(resetBtn);
+    return wrap;
+  }
+
+  // Step 5: review tiers + pool settings + create
+  wrap.appendChild(el('div', null, 'Review Your Tiers')).style.cssText = 'font-size:16px;font-weight:800;margin-bottom:8px;';
+  golfTeamBuilderTiers.forEach((tier, i) => {
+    const card = el('div', 'event-card');
+    card.appendChild(el('div', null, `Tier ${i+1} (${tier.length})`)).style.cssText = 'font-size:12.5px;font-weight:800;margin-bottom:4px;';
+    card.appendChild(el('div', null, tier.join(', ') || 'None')).style.cssText = 'font-size:12px;color:var(--text-dim);';
+    wrap.appendChild(card);
+  });
+
+  const backToTiersBtn = el('button', null, '\u2190 Edit Tiers');
+  backToTiersBtn.style.cssText = 'width:100%;margin:10px 0;background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:10px;font-size:13px;font-weight:700;';
+  backToTiersBtn.onclick = () => { golfTeamBuilderStep = 4; render(); };
+  wrap.appendChild(backToTiersBtn);
+
+  wrap.appendChild(el('label', null, 'Pool Name (optional)'));
+  const nameInput = el('input'); nameInput.placeholder = 'e.g. Masters Draft'; nameInput.value = golfTeamBuilderName;
+  nameInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+  nameInput.oninput = () => { golfTeamBuilderName = nameInput.value; };
+  wrap.appendChild(nameInput);
+
+  wrap.appendChild(el('label', null, 'Who can join'));
+  const visSel = el('select');
+  visSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
+  [['public','\ud83d\udce2 Public (anyone)']].forEach(([v,l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; visSel.appendChild(o); });
+  (profile.friends || []).forEach(f => { const o = document.createElement('option'); o.value = 'individual:' + f.name; o.textContent = '\ud83d\udc64 ' + f.name; visSel.appendChild(o); });
+  (allPicks.filter(p => p.poolType === 'friendGroup' && (p.members||[]).some(m=>m.uid===profile.uid))).forEach(grp => { const o = document.createElement('option'); o.value = 'group:' + grp.id; o.textContent = '\ud83d\udc65 ' + grp.name; visSel.appendChild(o); });
+  visSel.value = golfTeamBuilderVisibility;
+  visSel.onchange = () => { golfTeamBuilderVisibility = visSel.value; };
+  wrap.appendChild(visSel);
+
+  wrap.appendChild(el('label', null, 'Paid positions'));
+  const paidInput = el('input'); paidInput.type = 'number'; paidInput.min = '1'; paidInput.step = '1'; paidInput.value = String(golfTeamBuilderPaid);
+  paidInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:12px;box-sizing:border-box;';
+  paidInput.oninput = () => { golfTeamBuilderPaid = paidInput.value; };
+  wrap.appendChild(paidInput);
+
+  const createBtn = el('button', 'lock-btn', 'Create Team Pool');
+  wrap.appendChild(createBtn);
+  const errEl = el('div', 'pick-error');
+  wrap.appendChild(errEl);
+
+  createBtn.onclick = async () => {
+    const paidPositions = parseInt(paidInput.value, 10);
+    if (!paidPositions || paidPositions < 1) { errEl.textContent = 'Enter at least 1 paid position.'; return; }
+    const rawVis = golfTeamBuilderVisibility;
+    const groupId = rawVis.startsWith('group:') ? rawVis.slice(6) : null;
+    const targetFriend = rawVis.startsWith('individual:') ? rawVis.slice(11) : null;
+    const visibility = groupId ? 'group' : (targetFriend ? 'friend' : 'public');
+    const pool = {
+      id: profile.name + '_golfteam_' + Date.now(),
+      poolType: 'challenge', propType: 'golf_team', creator: profile.name,
+      sport: 'pga', gameLabel: field.tournamentName, tournamentId: field.tournamentId,
+      name: golfTeamBuilderName.trim() || null,
+      tiers: golfTeamBuilderTiers.map(t => t.slice()),
+      paidPositions, visibility, groupId, targetFriend,
+      status: 'open', participants: [],
+      timestamp: new Date().toISOString()
+    };
+    createBtn.disabled = true; createBtn.textContent = 'Saving…';
+    allPicks.push(pool);
+    try {
+      await savePicks(allPicks);
+      golfTeamBuilderStep = 1; golfTeamBuilderTiers = [[], [], [], [], []]; golfTeamBuilderName = ''; golfTeamBuilderVisibility = 'public'; golfTeamBuilderPaid = 1;
+      golfPoolMode = 'h2h';
+      poolsActiveTab = 'accepted';
+      render();
+    } catch (e) {
+      allPicks.pop();
+      createBtn.disabled = false; createBtn.textContent = 'Create Team Pool';
+      errEl.textContent = "Couldn't save (" + describeFetchError(e) + ") — try again.";
+    }
+  };
+  return wrap;
+}
 function renderGolfSection() {
   const wrap = el('div');
-  wrap.appendChild(el('div', 'setup-hint', "Golf challenges are ML bets: pick two players from the current tournament field, and whoever posts the lower score when the tournament finishes wins. Beta — double-check results once they settle."));
 
   if (!golfFieldCache) {
     if (!golfFieldAttempted) {
@@ -3625,6 +3991,22 @@ function renderGolfSection() {
     wrap.appendChild(el('div', 'empty', 'No active PGA tournament field found right now — check back closer to a tournament.'));
     return wrap;
   }
+
+  const modeToggle = el('div', 'league-scroller');
+  [['h2h','Head-to-Head'],['team','Team']].forEach(([id,label]) => {
+    const pill = el('button', 'league-pill' + (golfPoolMode === id ? ' active' : ''), label);
+    pill.onclick = () => { golfPoolMode = id; render(); };
+    modeToggle.appendChild(pill);
+  });
+  wrap.appendChild(modeToggle);
+
+  if (golfPoolMode === 'team') {
+    wrap.appendChild(renderGolfTeamPoolBuilder(field));
+    return wrap;
+  }
+
+  wrap.appendChild(el('div', 'setup-hint', "Golf challenges are ML bets: pick two players from the current tournament field, and whoever posts the lower score when the tournament finishes wins. Beta — double-check results once they settle."));
+
 
   wrap.appendChild(el('div', 'week-header', field.tournamentName));
   if (field.date) {
@@ -4207,6 +4589,51 @@ async function declineChallenge(ch) {
   catch (e) { allPicks[idx] = prev; allPicks.pop(); alert("Couldn't decline (" + describeFetchError(e) + ") — try again."); render(); }
 }
 
+function attachCardGesture(card, opts) {
+  const { stampAccept, stampDecline, onSwipeRight, onSwipeLeft, onTap } = opts;
+  let startX = 0, startY = 0, currentX = 0, dragging = false, locked = null; // locked: 'x' | 'y' | null
+  card.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    startX = t.clientX; startY = t.clientY; currentX = 0; dragging = true; locked = null;
+    card.style.transition = 'none';
+  }, { passive: true });
+  card.addEventListener('touchmove', (e) => {
+    if (!dragging) return;
+    const t = e.touches[0];
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    if (locked === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+      locked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    }
+    if (locked === 'x') {
+      e.preventDefault(); // this is a horizontal swipe — don't let the page also scroll
+      currentX = dx;
+      card.style.transform = `translateX(${currentX}px) rotate(${currentX / 20}deg)`;
+      if (stampAccept) { stampAccept.style.opacity = currentX > 20 ? String(Math.min(1, currentX / 100)) : '0'; }
+      if (stampDecline) { stampDecline.style.opacity = currentX < -20 ? String(Math.min(1, -currentX / 100)) : '0'; }
+    }
+    // locked === 'y' — do nothing, let the browser handle vertical scroll/pull-to-refresh natively
+  }, { passive: false });
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    if (locked === 'x') {
+      card.style.transition = 'transform 0.25s ease';
+      if (currentX > 100) { card.style.transform = `translateX(600px) rotate(30deg)`; setTimeout(onSwipeRight, 150); }
+      else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(onSwipeLeft, 150); }
+      else {
+        card.style.transform = 'translateX(0) rotate(0)';
+        if (stampAccept) stampAccept.style.opacity = '0';
+        if (stampDecline) stampDecline.style.opacity = '0';
+      }
+    } else if (locked === null && onTap) {
+      onTap();
+    }
+    currentX = 0; locked = null;
+  }
+  card.addEventListener('touchend', endDrag);
+  card.addEventListener('touchcancel', endDrag);
+}
 let poolSwipeFlipped = {}; // pool.id -> bool (only reachable when content overflows)
 function renderPoolSwipeCard(pool) {
   const cardWrap = el('div');
@@ -4293,32 +4720,11 @@ function renderPoolSwipeCard(pool) {
   cardWrap._doAccept = doAccept;
   cardWrap._doDecline = doDecline;
 
-  let startX = 0, currentX = 0, dragging = false, moved = false;
-  card.addEventListener('pointerdown', (e) => { dragging = true; moved = false; startX = e.clientX; card.style.transition = 'none'; card.setPointerCapture(e.pointerId); });
-  card.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    currentX = e.clientX - startX;
-    if (Math.abs(currentX) > 8) moved = true;
-    card.style.transform = `translateX(${currentX}px) rotate(${currentX / 20}deg)`;
-    if (currentX > 20) { stampAccept.style.opacity = Math.min(1, currentX / 100); stampDecline.style.opacity = 0; }
-    else if (currentX < -20) { stampDecline.style.opacity = Math.min(1, -currentX / 100); stampAccept.style.opacity = 0; }
-    else { stampAccept.style.opacity = 0; stampDecline.style.opacity = 0; }
+  attachCardGesture(card, {
+    stampAccept, stampDecline,
+    onSwipeRight: doAccept, onSwipeLeft: doDecline,
+    onTap: () => { if (canFlip) { poolSwipeFlipped[pool.id] = !poolSwipeFlipped[pool.id]; render(); } }
   });
-  function endDrag() {
-    if (!dragging) return;
-    dragging = false;
-    card.style.transition = 'transform 0.25s ease';
-    if (currentX > 100) { card.style.transform = `translateX(600px) rotate(30deg)`; setTimeout(doAccept, 150); }
-    else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(doDecline, 150); }
-    else {
-      card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0;
-      if (!moved && canFlip) { poolSwipeFlipped[pool.id] = !poolSwipeFlipped[pool.id]; render(); }
-    }
-    currentX = 0;
-  }
-
-  card.addEventListener('pointerup', endDrag);
-  card.addEventListener('pointercancel', endDrag);
   return cardWrap;
 }
 function renderDailyPoolSwipeCard() {
@@ -4407,31 +4813,11 @@ function renderDailyPoolSwipeCard() {
   cardWrap._doAccept = doAccept;
   cardWrap._doDecline = doDecline;
 
-  let startX = 0, currentX = 0, dragging = false, moved = false;
-  card.addEventListener('pointerdown', (e) => { dragging = true; moved = false; startX = e.clientX; card.style.transition = 'none'; card.setPointerCapture(e.pointerId); });
-  card.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    currentX = e.clientX - startX;
-    if (Math.abs(currentX) > 8) moved = true;
-    card.style.transform = `translateX(${currentX}px) rotate(${currentX / 20}deg)`;
-    if (currentX > 20) { stampAccept.style.opacity = Math.min(1, currentX / 100); stampDecline.style.opacity = 0; }
-    else if (currentX < -20) { stampDecline.style.opacity = Math.min(1, -currentX / 100); stampAccept.style.opacity = 0; }
-    else { stampAccept.style.opacity = 0; stampDecline.style.opacity = 0; }
+  attachCardGesture(card, {
+    stampAccept, stampDecline,
+    onSwipeRight: doAccept, onSwipeLeft: doDecline,
+    onTap: () => { if (canFlip) { poolSwipeFlipped['__daily_house_pool__'] = !poolSwipeFlipped['__daily_house_pool__']; render(); } }
   });
-  function endDrag(e) {
-    if (!dragging) return;
-    dragging = false;
-    card.style.transition = 'transform 0.25s ease';
-    if (currentX > 100) { card.style.transform = `translateX(600px) rotate(30deg)`; setTimeout(doAccept, 150); }
-    else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(doDecline, 150); }
-    else {
-      card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0;
-      if (!moved && canFlip) { poolSwipeFlipped['__daily_house_pool__'] = !poolSwipeFlipped['__daily_house_pool__']; render(); }
-    }
-    currentX = 0;
-  }
-  card.addEventListener('pointerup', endDrag);
-  card.addEventListener('pointercancel', endDrag);
   return cardWrap;
 }
 function renderPoolSwipeMode(extraRows, showDailyFirst) {
@@ -4596,27 +4982,7 @@ function renderSwipeCard(ch) {
   cardWrap._doAccept = doAccept;
   cardWrap._doDecline = doDecline;
 
-  let startX = 0, currentX = 0, dragging = false;
-  card.addEventListener('pointerdown', (e) => { dragging = true; startX = e.clientX; card.style.transition = 'none'; card.setPointerCapture(e.pointerId); });
-  card.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    currentX = e.clientX - startX;
-    card.style.transform = `translateX(${currentX}px) rotate(${currentX / 20}deg)`;
-    if (currentX > 20) { stampAccept.style.opacity = Math.min(1, currentX / 100); stampDecline.style.opacity = 0; }
-    else if (currentX < -20) { stampDecline.style.opacity = Math.min(1, -currentX / 100); stampAccept.style.opacity = 0; }
-    else { stampAccept.style.opacity = 0; stampDecline.style.opacity = 0; }
-  });
-  function endDrag() {
-    if (!dragging) return;
-    dragging = false;
-    card.style.transition = 'transform 0.25s ease';
-    if (currentX > 100) { card.style.transform = `translateX(600px) rotate(30deg)`; setTimeout(doAccept, 150); }
-    else if (currentX < -100) { card.style.transform = `translateX(-600px) rotate(-30deg)`; setTimeout(doDecline, 150); }
-    else { card.style.transform = 'translateX(0) rotate(0)'; stampAccept.style.opacity = 0; stampDecline.style.opacity = 0; }
-    currentX = 0;
-  }
-  card.addEventListener('pointerup', endDrag);
-  card.addEventListener('pointercancel', endDrag);
+  attachCardGesture(card, { stampAccept, stampDecline, onSwipeRight: doAccept, onSwipeLeft: doDecline });
   return cardWrap;
 }
 
@@ -5028,7 +5394,7 @@ function computeGroupLeaderboardStats(grp) {
   const stats = {};
   grp.members.forEach(m => { stats[m.name] = { wins: 0, losses: 0, units: 0 }; });
 
-  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.status === 'accepted' && new Date(p.timestamp) >= periodStart).forEach(ch => {
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.propType !== 'golf_team' && p.status === 'accepted' && new Date(p.timestamp) >= periodStart).forEach(ch => {
     [['creator', true], ['acceptedBy', false]].forEach(([role, isCreator]) => {
       const name = ch[role];
       if (!name || !memberNames.has(name)) return;
@@ -5050,12 +5416,24 @@ function computeGroupLeaderboardStats(grp) {
       stats[pt.name].units += score;
     });
   });
+
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'golf_team' && p.status === 'settled' && new Date(p.timestamp) >= periodStart).forEach(pool => {
+    (pool.participants || []).forEach(pt => {
+      if (!memberNames.has(pt.name)) return;
+      const payout = (pool.payouts || []).find(po => po.name === pt.name);
+      const result = computeGolfTeamParticipantScore(pool, pt);
+      if (result.total === null) return;
+      if (payout && payout.placed) stats[pt.name].wins++;
+      else stats[pt.name].losses++;
+      stats[pt.name].units += -result.total; // golf: lower score is better, so flip sign to match "higher units total is better"
+    });
+  });
   return stats;
 }
 function computeH2HStats(nameA, nameB, resetAt) {
   const periodStart = new Date(resetAt || '1970-01-01T00:00:00.000Z');
   const stats = { [nameA]: { wins: 0, units: 0 }, [nameB]: { wins: 0, units: 0 } };
-  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.status === 'accepted' && new Date(p.timestamp) >= periodStart &&
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.propType !== 'golf_team' && p.status === 'accepted' && new Date(p.timestamp) >= periodStart &&
     ((p.creator === nameA && p.acceptedBy === nameB) || (p.creator === nameB && p.acceptedBy === nameA))
   ).forEach(ch => {
     const profitCreator = computeChallengeProfit(ch, true);
@@ -5075,6 +5453,17 @@ function computeH2HStats(nameA, nameB, resetAt) {
     stats[nameB].units += scoreB;
     if (scoreA > scoreB) stats[nameA].wins++;
     else if (scoreB > scoreA) stats[nameB].wins++;
+  });
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'golf_team' && p.status === 'settled' && new Date(p.timestamp) >= periodStart &&
+    (p.participants || []).some(pt => pt.name === nameA) && (p.participants || []).some(pt => pt.name === nameB)
+  ).forEach(pool => {
+    const scoreA = computeGolfTeamParticipantScore(pool, pool.participants.find(pt => pt.name === nameA)).total;
+    const scoreB = computeGolfTeamParticipantScore(pool, pool.participants.find(pt => pt.name === nameB)).total;
+    if (scoreA === null || scoreB === null) return;
+    stats[nameA].units += -scoreA; // golf: lower score is better, flip sign to match units convention
+    stats[nameB].units += -scoreB;
+    if (scoreA < scoreB) stats[nameA].wins++;
+    else if (scoreB < scoreA) stats[nameB].wins++;
   });
   return stats;
 }
@@ -5957,6 +6346,7 @@ function settlePick(p) {
   if (p.propType === 'player') return { status: 'pending' }; // resolved by persistNewlySettledPlayerProps
   if (p.propType === 'golf_h2h') return { status: 'pending' }; // resolved by persistNewlySettledGolfH2H
   if (p.propType === 'combo_pool') return { status: 'pending' }; // resolved by persistNewlySettledComboPool
+  if (p.propType === 'golf_team') return { status: 'pending' }; // resolved by persistNewlySettledGolfTeamPool
   const idx = gameIndex[p.gameId];
   if (!idx) return { status: 'pending' };
   const g = idx.game;
@@ -6022,6 +6412,45 @@ async function ensurePoolPlayerPropBoxScores() {
     const [sport, gameId] = pair.split('|');
     try { await fetchPlayerBoxScore(sport, gameId); } catch (e) { /* leave uncached, will retry next cycle */ }
   }
+}
+function computeGolfTeamPayouts(pool) {
+  const field = (golfFieldCache && golfFieldCache.tournamentId === pool.tournamentId) ? golfFieldCache : null;
+  if (!field || !field.completed) return null; // tournament not finished yet
+  const participants = pool.participants || [];
+  if (!participants.length) return [];
+  const scored = participants.map(p => ({ name: p.name, ...computeGolfTeamParticipantScore(pool, p) }));
+  if (scored.some(s => s.total === null)) return null; // shouldn't happen once completed, but be safe
+  scored.sort((a,b) => a.total - b.total); // lowest golf score wins
+  const placements = [];
+  let slotIndex = 0, i = 0;
+  while (i < scored.length && slotIndex < pool.paidPositions) {
+    let j = i;
+    while (j < scored.length && scored[j].total === scored[i].total) j++;
+    const tierSize = j - i;
+    const tierStartSlot = slotIndex;
+    const tierEndSlot = Math.min(slotIndex + tierSize, pool.paidPositions) - 1;
+    if (tierEndSlot >= tierStartSlot) {
+      for (let k = i; k < j; k++) placements.push({ name: scored[k].name, placed: true });
+    }
+    slotIndex += tierSize;
+    i = j;
+  }
+  return placements;
+}
+async function persistNewlySettledGolfTeamPool() {
+  let changed = false;
+  const toCheck = allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'golf_team' && p.status === 'open' && (p.participants || []).length > 0);
+  if (!toCheck.length) return false;
+  await fetchGolfField(false);
+  for (const pool of toCheck) {
+    const payouts = computeGolfTeamPayouts(pool);
+    if (payouts === null) continue; // tournament still in progress
+    pool.payouts = payouts;
+    pool.status = 'settled';
+    changed = true;
+  }
+  if (changed) { try { await savePicks(allPicks); } catch (e) { /* best-effort; retry next cycle */ } }
+  return changed;
 }
 async function persistNewlySettledComboPool() {
   let changed = false;
