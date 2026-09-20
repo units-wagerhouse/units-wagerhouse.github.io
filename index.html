@@ -435,6 +435,7 @@ function markAcceptedChallengesSeen() {
 let poolBuilderLegs = []; // [{sport, gameId, gameLabel, betType, sideAbbr, line, spreadLabel, displayText}]
 let poolBuilderName = '';
 let poolLegDraft = { league: '', gameId: '', betType: '', propName: '', propCat: '', propLine: '' };
+let poolBuilderDateFilter = 'week'; // 'today' | 'tomorrow' | 'week'
 let poolBuilderBuyIn = 10;
 let poolBuilderBudget = 10;
 let poolBuilderMaxPerPick = 10;
@@ -2334,21 +2335,7 @@ function renderPoolsSection() {
 
     const golfMeta = LEAGUES_META.find(l => l.isGolf);
     if (golfMeta && poolCreateSport === golfMeta.id) {
-      if (!golfFieldCache) {
-        if (!golfFieldAttempted) {
-          wrap.appendChild(el('div', 'empty', 'Loading tournament field…'));
-          fetchGolfField(false).then(() => render());
-          return wrap;
-        }
-        wrap.appendChild(el('div', 'empty', 'No active PGA tournament field found right now — check back closer to a tournament.'));
-        return wrap;
-      }
-      const field = golfFieldCache;
-      if (!field || !field.players.length) {
-        wrap.appendChild(el('div', 'empty', 'No active PGA tournament field found right now — check back closer to a tournament.'));
-        return wrap;
-      }
-      wrap.appendChild(renderGolfTeamPoolBuilder(field));
+      wrap.appendChild(renderGolfSection());
       return wrap;
     }
 
@@ -3174,6 +3161,14 @@ function renderPoolBuilder() {
   const addCard = el('div');
   addCard.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
 
+  const poolDateScroller = el('div', 'league-scroller');
+  [['week','All Week'],['today','Today'],['tomorrow','Tomorrow']].forEach(([id,label]) => {
+    const pill = el('button', 'league-pill' + (poolBuilderDateFilter === id ? ' active' : ''), label);
+    pill.onclick = () => { poolBuilderDateFilter = id; poolLegDraft.gameId = ''; poolLegDraft.betType = ''; render(); };
+    poolDateScroller.appendChild(pill);
+  });
+  addCard.appendChild(poolDateScroller);
+
   addCard.appendChild(el('label', null, 'Game'));
   const gameSel = el('select');
   gameSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
@@ -3202,17 +3197,27 @@ function renderPoolBuilder() {
   function rebuildGameOptions() {
     const sport = poolCreateSport;
     gameSel.innerHTML = '';
-    const todayKey = houseDayKey(new Date());
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const moneylineOnly = !!(LEAGUES_META.find(l => l.id === sport) || {}).moneylineOnly;
     const games = (DATA[sport] || []).filter(g => {
       if (g.status !== 'scheduled') return false;
-      if (houseDayKey(new Date(g.start)) !== todayKey) return false;
+      const gd = new Date(g.start);
+      if (poolBuilderDateFilter === 'today') {
+        if (!(gd.getFullYear() === now.getFullYear() && gd.getMonth() === now.getMonth() && gd.getDate() === now.getDate())) return false;
+      } else if (poolBuilderDateFilter === 'tomorrow') {
+        const tmrw = new Date(startOfToday); tmrw.setDate(tmrw.getDate() + 1);
+        if (!(gd.getFullYear() === tmrw.getFullYear() && gd.getMonth() === tmrw.getMonth() && gd.getDate() === tmrw.getDate())) return false;
+      } else {
+        const weekEnd = new Date(startOfToday); weekEnd.setDate(weekEnd.getDate() + 7);
+        if (!(gd >= startOfToday && gd < weekEnd)) return false;
+      }
       if (moneylineOnly) return true; // moneyline itself is the only market these leagues offer
       const hasSpread = computeSpread(sport, g) !== null;
       const hasTotal = g.overUnder !== null && g.overUnder !== undefined;
       return hasSpread || hasTotal;
     });
-    if (!games.length) { const o = document.createElement('option'); o.value = ''; o.textContent = 'No games with posted lines today'; gameSel.appendChild(o); }
+    if (!games.length) { const o = document.createElement('option'); o.value = ''; o.textContent = 'No games with posted lines in this range'; gameSel.appendChild(o); }
     games.slice().sort((a,b) => new Date(a.start) - new Date(b.start)).forEach(g => {
       const o = document.createElement('option'); o.value = g.id;
       o.textContent = `${fullTeamName2(sport, g, g.away)} @ ${fullTeamName2(sport, g, g.home)}`;
@@ -3887,7 +3892,6 @@ function assignedGolfPlayerNames() {
 }
 function renderGolfTeamPoolBuilder(field) {
   const wrap = el('div');
-  if (!golfRankAttempted) { fetchGolfRankings().then(() => render()); }
 
   if (golfTeamBuilderStep <= 4) {
     const tierNum = golfTeamBuilderStep;
@@ -3902,7 +3906,7 @@ function renderGolfTeamPoolBuilder(field) {
       const listWrap = el('div');
       listWrap.style.cssText = 'max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px;';
       golfPlayersSortedByRank(remaining).forEach(p => {
-        const rank = golfRankMap ? golfRankMap[p.name.toLowerCase()] : undefined;
+        const rank = p.rank;
         const selected = golfTeamBuilderTiers[tierNum-1].includes(p.name);
         const row = el('div', 'pick-row');
         row.style.cssText = 'margin-top:4px;cursor:pointer;' + (selected ? 'border-color:var(--accent);' : '');
@@ -6709,36 +6713,11 @@ async function persistNewlySettledPlayerProps() {
 let golfFieldCache = null; // { tournamentId, tournamentName, completed, players: [{id, name, score}] } | null
 let golfFieldAttempted = false;
 let golfFieldCacheTime = 0;
-let golfRankMap = null; // name(lowercase) -> OWGR rank number, or null if unavailable
-let golfRankAttempted = false;
-async function fetchGolfRankings() {
-  if (golfRankAttempted) return golfRankMap;
-  golfRankAttempted = true;
-  try {
-    const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/golf/rankings');
-    if (!res.ok) return null;
-    const json = await res.json();
-    const list = (json.rankings && json.rankings[0] && json.rankings[0].athletes) || json.athletes || [];
-    if (!Array.isArray(list) || !list.length) return null;
-    const map = {};
-    list.forEach(entry => {
-      const name = entry.athlete && (entry.athlete.displayName || entry.athlete.shortName);
-      const rank = entry.rank || entry.current;
-      if (name && rank) map[name.toLowerCase()] = rank;
-    });
-    if (!Object.keys(map).length) return null;
-    golfRankMap = map;
-    return golfRankMap;
-  } catch (e) { return null; } // no reliable free OWGR source confirmed — fails soft to alphabetical
-}
 function golfPlayersSortedByRank(players) {
-  if (!golfRankMap) return players.slice().sort((a,b) => a.name.localeCompare(b.name));
   return players.slice().sort((a,b) => {
-    const ra = golfRankMap[a.name.toLowerCase()];
-    const rb = golfRankMap[b.name.toLowerCase()];
-    if (ra !== undefined && rb !== undefined) return ra - rb;
-    if (ra !== undefined) return -1;
-    if (rb !== undefined) return 1;
+    if (a.rank !== null && b.rank !== null) return a.rank - b.rank;
+    if (a.rank !== null) return -1;
+    if (b.rank !== null) return 1;
     return a.name.localeCompare(b.name);
   });
 }
@@ -6767,12 +6746,17 @@ async function fetchGolfField(forceRefresh) {
       const scoreRaw = (c.score !== undefined && c.score !== null) ? c.score : (c.statistics && c.statistics[0] && c.statistics[0].displayValue);
       const roundScores = (c.linescores || []).map(ls => parseGolfScore(ls.value !== undefined ? ls.value : ls.displayValue));
       const statusDesc = (c.status && c.status.type && (c.status.type.description || c.status.type.name || c.status.type.detail)) || '';
+      // World ranking, when ESPN includes it on the competitor/athlete entry itself — field name varies by
+      // endpoint version, so check every plausible spot rather than assuming one.
+      const rankRaw = c.rank ?? c.seed ?? athlete.rank ?? athlete.owgr ?? athlete.worldRanking ?? (athlete.rankings && athlete.rankings.owgr) ?? null;
+      const rank = (rankRaw !== null && rankRaw !== undefined && !isNaN(parseInt(rankRaw, 10))) ? parseInt(rankRaw, 10) : null;
       return {
         id: String(athlete.id || c.id || athlete.displayName || ''),
         name: athlete.displayName || athlete.shortName || null,
         score: parseGolfScore(scoreRaw),
         roundScores, // [round1, round2, round3, round4] relative-to-par, best-effort — not verified live
-        missedCut: /cut/i.test(statusDesc)
+        missedCut: /cut/i.test(statusDesc),
+        rank // OWGR/world rank if the field list happens to include it; null if not present for this event
       };
     }).filter(p => p.name);
     golfFieldCache = { tournamentId: ev.id, tournamentName: ev.name || ev.shortName || 'PGA Tour Event', date: ev.date || null, completed, players };
