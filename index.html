@@ -3357,12 +3357,6 @@ function renderPoolBuilder() {
   cfgCard.appendChild(maxPerPickInput);
   cfgCard.appendChild(el('div', 'setup-hint', "The most house units anyone can put on a single pick. Every pick still needs at least 1 unit \u2014 no game can be left with zero weight."));
 
-  cfgCard.appendChild(el('label', null, 'Paid positions (how many finishers split the purse)'));
-  const paidInput = el('input'); paidInput.type = 'number'; paidInput.min = '1'; paidInput.step = '1'; paidInput.value = String(poolBuilderPaid);
-  paidInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box;';
-  paidInput.oninput = () => { poolBuilderPaid = paidInput.value; };
-  cfgCard.appendChild(paidInput);
-
   wrap.appendChild(cfgCard);
 
   const submitBtn = el('button', 'lock-btn', 'Submit Pool');
@@ -3373,12 +3367,11 @@ function renderPoolBuilder() {
 
   submitBtn.onclick = async () => {
     const houseUnitsBudget = parseFloat(budgetInput.value);
-    const paidPositions = parseInt(paidInput.value, 10);
+    const paidPositions = 1; // no prize to split — top finisher is simply the winner
     const maxUnitsPerPick = parseFloat(maxPerPickInput.value);
     submitErr.textContent = '';
     if (!houseUnitsBudget || houseUnitsBudget <= 0) { submitErr.textContent = 'Enter a valid unit budget.'; return; }
     if (poolBuilderMustPickAll && houseUnitsBudget < Math.max(10, poolBuilderLegs.length)) { submitErr.textContent = `With "must pick every game" on, you need at least ${Math.max(10, poolBuilderLegs.length)} units for ${poolBuilderLegs.length} games.`; return; }
-    if (!paidPositions || paidPositions < 1) { submitErr.textContent = 'Enter at least 1 paid position.'; return; }
     if (!maxUnitsPerPick || maxUnitsPerPick < 1) { submitErr.textContent = 'Max units per pick must be at least 1.'; return; }
     const rawVis = poolBuilderVisibility;
     const poolGroupId = rawVis.startsWith('group:') ? rawVis.slice(6) : null;
@@ -3571,7 +3564,7 @@ function renderGolfTeamPoolCard(pool) {
   }
   card.appendChild(el('div', null, pool.name || pool.gameLabel)).style.cssText = 'font-size:13.5px;font-weight:700;margin-bottom:4px;';
   const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 ' + (pool.targetFriend || 'Individual'));
-  card.appendChild(el('div', null, `Golf Draft \u00b7 top ${pool.paidPositions} paid \u00b7 Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
+  card.appendChild(el('div', null, `Golf Draft \u00b7 Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
 
   if (pool.status === 'settled') {
     card.appendChild(el('div', 'no-odds-note', 'Pool settled \u2014 tournament finished.'));
@@ -3725,10 +3718,10 @@ function renderPoolCard(pool) {
   }
   card.appendChild(el('div', null, pool.name || pool.gameLabel)).style.cssText = 'font-size:13.5px;font-weight:700;margin-bottom:4px;';
   const poolVisText = pool.visibility === 'public' ? '\ud83d\udce2 Public' : (pool.visibility === 'group' ? '\ud83d\udc65 ' + ((allPicks.find(p => p.poolType === 'friendGroup' && p.id === pool.groupId) || {}).name || 'Group') : '\ud83d\udc64 ' + (pool.targetFriend || 'Individual'));
-  card.appendChild(el('div', null, `${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 top ${pool.paidPositions} paid \u00b7 Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
+  card.appendChild(el('div', null, `${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 Created by ${pool.creator} \u00b7 ${participants.length} joined \u00b7 ${poolVisText}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-bottom:8px;';
 
   if (pool.status === 'settled') {
-    card.appendChild(el('div', 'no-odds-note', 'Pool settled \u2014 purse paid out.'));
+    card.appendChild(el('div', 'no-odds-note', 'Pool settled \u2014 final standings locked in.'));
   } else if (myEntry) {
     card.appendChild(el('div', 'no-odds-note', "You're in \u2014 waiting for games to finish."));
   } else if (pool.status === 'open') {
@@ -4102,20 +4095,13 @@ function renderGolfTeamPoolBuilder(field) {
   visSel.onchange = () => { golfTeamBuilderVisibility = visSel.value; };
   wrap.appendChild(visSel);
 
-  wrap.appendChild(el('label', null, 'Paid positions'));
-  const paidInput = el('input'); paidInput.type = 'number'; paidInput.min = '1'; paidInput.step = '1'; paidInput.value = String(golfTeamBuilderPaid);
-  paidInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:12px;box-sizing:border-box;';
-  paidInput.oninput = () => { golfTeamBuilderPaid = paidInput.value; };
-  wrap.appendChild(paidInput);
-
   const createBtn = el('button', 'lock-btn', 'Create Team Pool');
   wrap.appendChild(createBtn);
   const errEl = el('div', 'pick-error');
   wrap.appendChild(errEl);
 
   createBtn.onclick = async () => {
-    const paidPositions = parseInt(paidInput.value, 10);
-    if (!paidPositions || paidPositions < 1) { errEl.textContent = 'Enter at least 1 paid position.'; return; }
+    const paidPositions = 1; // no prize to split — top finisher is simply the winner
     const rawVis = golfTeamBuilderVisibility;
     const groupId = rawVis.startsWith('group:') ? rawVis.slice(6) : null;
     const targetFriend = rawVis.startsWith('individual:') ? rawVis.slice(11) : null;
@@ -4782,7 +4768,7 @@ function renderPoolSwipeCard(pool) {
   const nameId = 'poolswipe-name-' + pool.id.replace(/[^a-zA-Z0-9]/g, '');
   const mid = el('div');
   mid.style.cssText = 'text-align:center;margin:14px 0;';
-  mid.innerHTML = `<div id="${nameId}" style="font-size:20px;font-weight:900;color:#1a1a1a;white-space:nowrap;overflow:hidden;margin-bottom:8px;">${pool.name || pool.gameLabel}</div><div style="font-size:12px;color:#5a5342;font-weight:700;">${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 top ${pool.paidPositions} paid \u00b7 ${poolVisText}</div><div style="font-size:11px;color:#8a8168;font-weight:700;margin-top:4px;">Locks ${lockText}</div>`;
+  mid.innerHTML = `<div id="${nameId}" style="font-size:20px;font-weight:900;color:#1a1a1a;white-space:nowrap;overflow:hidden;margin-bottom:8px;">${pool.name || pool.gameLabel}</div><div style="font-size:12px;color:#5a5342;font-weight:700;">${pool.legs.length} game${pool.legs.length === 1 ? '' : 's'} \u00b7 ${poolVisText}</div><div style="font-size:11px;color:#8a8168;font-weight:700;margin-top:4px;">Locks ${lockText}</div>`;
   card.appendChild(mid);
   setTimeout(() => { const el2 = document.getElementById(nameId); if (el2) shrinkTextToFit(el2, 14); }, 0);
 
