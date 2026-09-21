@@ -1228,6 +1228,8 @@ let groupLeaderboardOpen = {}; // groupId -> bool
 let groupInviteOpen = {}; // groupId -> bool
 let h2hSectionOpen = {}; // pairKey -> bool
 let matchupHistoryOpen = {}; // pairKey_name -> bool
+let matchWinDateOpen = {}; // recordId_name_dateKey -> bool
+let matchWinHistoryPanelOpen = {}; // historyKey -> bool
 let autoMatchNotice = null; // { creator, isFriend } | null
 let friendsAllProfilesLoaded = false;
 let friendProfileView = null; // uid of a friend whose profile card is expanded
@@ -1414,8 +1416,20 @@ function renderFriendsScreen() {
       lbCard.appendChild(el('div', null, 'Current standings')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:6px;';
       ranked.forEach((s, i) => {
         const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;';
-        r.innerHTML = `<span>${i + 1}. ${s.name}${s.name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${matchWins[s.name] || 0} match wins</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
+        const leftSpan = el('span', null, `${i + 1}. ${s.name}${s.name === profile.name ? ' (you)' : ''} `);
+        const winsSpan = el('span', null, `${matchWins[s.name] || 0} match wins`);
+        winsSpan.style.cssText = 'color:var(--text-faint);text-decoration:underline;cursor:pointer;';
+        const groupHistKey = grp.id + '_' + s.name;
+        winsSpan.onclick = () => { matchWinHistoryPanelOpen[groupHistKey] = !matchWinHistoryPanelOpen[groupHistKey]; render(); };
+        leftSpan.appendChild(winsSpan);
+        r.appendChild(leftSpan);
+        const valSpan = el('span', null, `${s.units > 0 ? '+' : ''}${Math.round(s.units)}u`);
+        valSpan.style.cssText = `font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};`;
+        r.appendChild(valSpan);
         lbCard.appendChild(r);
+        if (matchWinHistoryPanelOpen[groupHistKey]) {
+          lbCard.appendChild(renderMatchWinHistory(grp.id, grp.matchWinLog, s.name, (start, end) => computeGroupHistoryForMember(grp, s.name, start, end).map(entry => ({ label: entry.label, value: entry.value }))));
+        }
       });
       checkGroupThreshold(grp, stats).then(changed => { if (changed) render(); });
 
@@ -1445,14 +1459,17 @@ function renderFriendsScreen() {
         if (!confirm('Reset this leaderboard? Whoever\'s in the lead right now gets credit for winning this match, then everyone starts fresh.')) return;
         const idx = allPicks.findIndex(p => p.id === grp.id);
         if (idx === -1) return;
-        const prev = { leaderboardResetMode: allPicks[idx].leaderboardResetMode, leaderboardPeriodStart: allPicks[idx].leaderboardPeriodStart, matchWins: allPicks[idx].matchWins };
+        const nowIso = new Date().toISOString();
+        const prev = { leaderboardResetMode: allPicks[idx].leaderboardResetMode, leaderboardPeriodStart: allPicks[idx].leaderboardPeriodStart, matchWins: allPicks[idx].matchWins, matchWinLog: allPicks[idx].matchWinLog };
         const currentLeader = ranked.length && ranked[0].units > 0 ? ranked[0].name : null;
         if (currentLeader) {
           const prevMatchWins = { ...(allPicks[idx].matchWins || {}) };
+          const prevLog = (allPicks[idx].matchWinLog || []).slice();
           allPicks[idx].matchWins = { ...prevMatchWins, [currentLeader]: (prevMatchWins[currentLeader] || 0) + 1 };
+          allPicks[idx].matchWinLog = [...prevLog, { name: currentLeader, date: nowIso, periodStart: allPicks[idx].leaderboardPeriodStart || null }];
         }
         allPicks[idx].leaderboardResetMode = 'manual';
-        allPicks[idx].leaderboardPeriodStart = new Date().toISOString();
+        allPicks[idx].leaderboardPeriodStart = nowIso;
         try { await savePicks(allPicks); render(); }
         catch (e) { Object.assign(allPicks[idx], prev); alert("Couldn't reset (" + describeFetchError(e) + ") — try again."); }
       };
@@ -1635,9 +1652,24 @@ function renderFriendsScreen() {
           const s = quickStats[name];
           const historyKey = pairKey + '_' + name;
           const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;cursor:pointer;';
-          r.innerHTML = `<span>${matchupHistoryOpen[historyKey] ? '\u25be' : '\u25b8'} ${name}${name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${matchWins[name] || 0} match wins</span></span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
+          const nameSpan = el('span');
+          nameSpan.innerHTML = `${matchupHistoryOpen[historyKey] ? '\u25be' : '\u25b8'} ${name}${name === profile.name ? ' (you)' : ''} `;
+          const winsSpan = el('span', null, `${matchWins[name] || 0} match wins`);
+          winsSpan.style.cssText = 'color:var(--text-faint);text-decoration:underline;cursor:pointer;';
+          winsSpan.onclick = (e) => { e.stopPropagation(); matchWinHistoryPanelOpen[historyKey] = !matchWinHistoryPanelOpen[historyKey]; render(); };
+          nameSpan.appendChild(winsSpan);
+          r.appendChild(nameSpan);
+          const valSpan = el('span', null, `${s.units > 0 ? '+' : ''}${Math.round(s.units)}u`);
+          valSpan.style.cssText = `font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};`;
+          r.appendChild(valSpan);
           r.onclick = () => { matchupHistoryOpen[historyKey] = !matchupHistoryOpen[historyKey]; render(); };
           h2hCard.appendChild(r);
+          if (matchWinHistoryPanelOpen[historyKey]) {
+            h2hCard.appendChild(renderMatchWinHistory(pairKey, tracker ? tracker.matchWinLog : [], name, (start, end) => computeH2HHistory(profile.name, f.name, start)
+              .filter(entry => new Date(entry.date) <= new Date(end))
+              .map(entry => ({ label: (entry.labels && entry.labels[name]) || entry.label, value: entry.results[name] }))
+              .filter(e => e.value !== undefined)));
+          }
           if (matchupHistoryOpen[historyKey]) {
             const histWrap = el('div'); histWrap.style.cssText = 'padding:4px 0 6px 14px;';
             if (!h2hHistory.length) { histWrap.appendChild(el('div', 'empty', 'No games yet this matchup.')); }
@@ -1686,18 +1718,25 @@ function renderFriendsScreen() {
           const idx = allPicks.findIndex(p => p.id === pairKey);
           const nowIso = new Date().toISOString();
           const leaderName = quickStats[profile.name].units > quickStats[f.name].units ? profile.name : (quickStats[f.name].units > quickStats[profile.name].units ? f.name : null);
+          let prevRec = null;
           if (idx === -1) {
             const newMatchWins = leaderName ? { [leaderName]: 1 } : {};
-            const rec = { id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, matchWins: newMatchWins, winThreshold: null, timestamp: nowIso };
+            const newLog = leaderName ? [{ name: leaderName, date: nowIso, periodStart: null }] : [];
+            const rec = { id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, matchWins: newMatchWins, matchWinLog: newLog, winThreshold: null, timestamp: nowIso };
             allPicks.push(rec);
           } else {
+            prevRec = { ...allPicks[idx] };
             const prevMatchWins = { ...(allPicks[idx].matchWins || {}) };
-            if (leaderName) allPicks[idx].matchWins = { ...prevMatchWins, [leaderName]: (prevMatchWins[leaderName] || 0) + 1 };
+            const prevLog = (allPicks[idx].matchWinLog || []).slice();
+            if (leaderName) {
+              allPicks[idx].matchWins = { ...prevMatchWins, [leaderName]: (prevMatchWins[leaderName] || 0) + 1 };
+              allPicks[idx].matchWinLog = [...prevLog, { name: leaderName, date: nowIso, periodStart: allPicks[idx].resetAt || null }];
+            }
             allPicks[idx].resetAt = nowIso;
           }
           try { await savePicks(allPicks); render(); }
           catch (e) {
-            if (idx === -1) allPicks.pop(); else allPicks[idx].resetAt = tracker ? tracker.resetAt : null;
+            if (idx === -1) allPicks.pop(); else allPicks[idx] = prevRec;
             alert("Couldn't reset (" + describeFetchError(e) + ") — try again.");
           }
         };
@@ -5487,6 +5526,79 @@ function currentPeriodStart(rec) {
   }
   return rec.leaderboardPeriodStart || rec.timestamp || '1970-01-01T00:00:00.000Z';
 }
+function renderMatchWinHistory(recordId, matchWinLog, forName, historyFn) {
+  const wrap = el('div');
+  wrap.style.cssText = 'margin-top:4px;padding-left:14px;';
+  const wins = (matchWinLog || []).filter(w => w.name === forName);
+  if (!wins.length) { wrap.appendChild(el('div', 'empty', 'No match wins yet.')); return wrap; }
+
+  const byDay = {};
+  wins.forEach(w => {
+    const dayKey = new Date(w.date).toLocaleDateString('en-CA'); // YYYY-MM-DD, stable grouping key
+    if (!byDay[dayKey]) byDay[dayKey] = [];
+    byDay[dayKey].push(w);
+  });
+  const dayKeys = Object.keys(byDay).sort((a,b) => b.localeCompare(a));
+
+  dayKeys.forEach(dayKey => {
+    const dayWins = byDay[dayKey];
+    const openKey = recordId + '_' + forName + '_' + dayKey;
+    const isOpen = !!matchWinDateOpen[openKey];
+    const dateLabel = new Date(dayWins[0].date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const row = el('div');
+    row.style.cssText = 'font-size:12px;padding:4px 0;cursor:pointer;color:var(--text-dim);';
+    row.innerHTML = `${isOpen ? '\u25be' : '\u25b8'} ${dateLabel}${dayWins.length > 1 ? ` (${dayWins.length})` : ''}`;
+    row.onclick = () => { matchWinDateOpen[openKey] = !isOpen; render(); };
+    wrap.appendChild(row);
+    if (isOpen) {
+      dayWins.forEach((w, i) => {
+        const breakdown = historyFn(w.periodStart, w.date);
+        const detailWrap = el('div');
+        detailWrap.style.cssText = 'padding:2px 0 6px 14px;';
+        if (dayWins.length > 1) detailWrap.appendChild(el('div', null, `Win ${i + 1}`)).style.cssText = 'font-size:10.5px;color:var(--text-faint);font-weight:700;margin-bottom:2px;';
+        if (!breakdown.length) { detailWrap.appendChild(el('div', 'empty', 'No contributing games found.')); }
+        else {
+          breakdown.forEach(entry => {
+            const val = entry.value;
+            const itemRow = el('div'); itemRow.style.cssText = 'display:flex;justify-content:space-between;font-size:11px;padding:2px 0;color:var(--text-dim);';
+            itemRow.innerHTML = `<span>${entry.label}</span><span style="font-weight:700;color:${val > 0 ? 'var(--accent)' : (val < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${val > 0 ? '+' : ''}${Math.round(val)}u</span>`;
+            detailWrap.appendChild(itemRow);
+          });
+        }
+        wrap.appendChild(detailWrap);
+      });
+    }
+  });
+  return wrap;
+}
+function computeGroupHistoryForMember(grp, memberName, periodStart, periodEnd) {
+  const start = new Date(periodStart || '1970-01-01T00:00:00.000Z');
+  const end = periodEnd ? new Date(periodEnd) : new Date();
+  const entries = [];
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.propType !== 'golf_team' && p.status === 'accepted' && new Date(p.timestamp) >= start && new Date(p.timestamp) <= end &&
+    (p.creator === memberName || p.acceptedBy === memberName)
+  ).forEach(ch => {
+    const isCreator = ch.creator === memberName;
+    const profit = computeChallengeProfit(ch, isCreator);
+    if (profit === null) return;
+    entries.push({ date: ch.timestamp, label: isCreator ? challengeMarketTxt(ch) : opponentSideView(ch), value: profit });
+  });
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool' && p.status === 'settled' && new Date(p.timestamp) >= start && new Date(p.timestamp) <= end &&
+    (p.participants || []).some(pt => pt.name === memberName)
+  ).forEach(pool => {
+    const score = poolParticipantScore(pool, pool.participants.find(pt => pt.name === memberName)).total;
+    entries.push({ date: pool.timestamp, label: `Pool \u2014 ${pool.name || pool.gameLabel}`, value: score });
+  });
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'golf_team' && p.status === 'settled' && new Date(p.timestamp) >= start && new Date(p.timestamp) <= end &&
+    (p.participants || []).some(pt => pt.name === memberName)
+  ).forEach(pool => {
+    const result = computeGolfTeamParticipantScore(pool, pool.participants.find(pt => pt.name === memberName));
+    if (result.total === null) return;
+    entries.push({ date: pool.timestamp, label: `Golf Draft \u2014 ${pool.name || pool.gameLabel}`, value: -result.total });
+  });
+  entries.sort((a,b) => new Date(b.date) - new Date(a.date));
+  return entries;
+}
 function computeGroupLeaderboardStats(grp) {
   const periodStart = new Date(currentPeriodStart(grp));
   const memberNames = new Set(grp.members.map(m => m.name));
@@ -5618,12 +5730,14 @@ async function checkGroupThreshold(grp, stats) {
   if (idx === -1) return false;
   const nowIso = new Date().toISOString();
   const prevMatchWins = { ...(grp.matchWins || {}) };
+  const prevLog = (grp.matchWinLog || []).slice();
   const newMatchWins = { ...prevMatchWins, [leader.name]: (prevMatchWins[leader.name] || 0) + 1 };
   allPicks[idx].matchWins = newMatchWins;
+  allPicks[idx].matchWinLog = [...prevLog, { name: leader.name, date: nowIso, periodStart: grp.leaderboardPeriodStart || null }];
   allPicks[idx].leaderboardResetMode = 'manual';
   allPicks[idx].leaderboardPeriodStart = nowIso;
   try { await savePicks(allPicks); return true; }
-  catch (e) { allPicks[idx].matchWins = prevMatchWins; return false; }
+  catch (e) { allPicks[idx].matchWins = prevMatchWins; allPicks[idx].matchWinLog = prevLog; return false; }
 }
 
 async function checkH2HThreshold(tracker, nameA, nameB, stats) {
@@ -5636,11 +5750,13 @@ async function checkH2HThreshold(tracker, nameA, nameB, stats) {
   if (idx === -1) return false;
   const nowIso = new Date().toISOString();
   const prevMatchWins = { ...(tracker.matchWins || {}) };
+  const prevLog = (tracker.matchWinLog || []).slice();
   const newMatchWins = { ...prevMatchWins, [leaderName]: (prevMatchWins[leaderName] || 0) + 1 };
   allPicks[idx].matchWins = newMatchWins;
+  allPicks[idx].matchWinLog = [...prevLog, { name: leaderName, date: nowIso, periodStart: tracker.resetAt || null }];
   allPicks[idx].resetAt = nowIso;
   try { await savePicks(allPicks); return true; }
-  catch (e) { allPicks[idx].matchWins = prevMatchWins; allPicks[idx].resetAt = tracker.resetAt; return false; }
+  catch (e) { allPicks[idx].matchWins = prevMatchWins; allPicks[idx].matchWinLog = prevLog; allPicks[idx].resetAt = tracker.resetAt; return false; }
 }
 
 function renderCompletedChallenges(mode) {
@@ -6916,7 +7032,7 @@ async function cleanupAcceptedChallengesOnce() {
   try { localStorage.setItem(FLAG, '1'); } catch (e) {}
 }
 async function clearChallengesPoolsAndUnitsOnce() {
-  const FLAG = 'ww_clear_challenges_pools_units_v3';
+  const FLAG = 'ww_clear_challenges_pools_units_v4';
   try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
   const before = JSON.stringify(allPicks);
   allPicks = allPicks.filter(p => p.poolType !== 'challenge' && p.poolType !== 'accountTx');
@@ -6924,9 +7040,11 @@ async function clearChallengesPoolsAndUnitsOnce() {
   allPicks.forEach(p => {
     if (p.poolType === 'friendGroup') {
       p.matchWins = {};
+      p.matchWinLog = [];
       p.leaderboardPeriodStart = nowIso;
     } else if (p.poolType === 'h2hTracker') {
       p.matchWins = {};
+      p.matchWinLog = [];
       p.resetAt = nowIso;
     }
   });
