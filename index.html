@@ -202,6 +202,27 @@ const gameIndex = {};
 function rebuildGameIndex() {
   Object.keys(gameIndex).forEach(k => delete gameIndex[k]);
   Object.keys(DATA).forEach(sport => (DATA[sport] || []).forEach(g => gameIndex[g.id] = { sport, game: g }));
+  Object.keys(settledGameCache).forEach(gid => { if (!gameIndex[gid]) gameIndex[gid] = settledGameCache[gid]; });
+}
+function updateSettledGameCache() {
+  let changed = false;
+  const cutoff = Date.now() - 60 * 24 * 60 * 60 * 1000; // keep 60 days — plenty of slack for settlement to catch up
+  Object.keys(DATA).forEach(sport => {
+    (DATA[sport] || []).forEach(g => {
+      if (g.status !== 'closed' && g.status !== 'complete') return;
+      if (!g.score || g.score[g.home] === undefined || g.score[g.away] === undefined) return;
+      const existing = settledGameCache[g.id];
+      if (!existing || JSON.stringify(existing.game) !== JSON.stringify(g)) {
+        settledGameCache[g.id] = { sport, game: g };
+        changed = true;
+      }
+    });
+  });
+  Object.keys(settledGameCache).forEach(gid => {
+    const g = settledGameCache[gid].game;
+    if (g.start && new Date(g.start).getTime() < cutoff) { delete settledGameCache[gid]; changed = true; }
+  });
+  return changed;
 }
 
 // ---------- live game list + scores (ESPN public scoreboard) ----------
@@ -305,20 +326,24 @@ async function refreshGameLists() {
       if (games.length) DATA[sport] = games;
     } catch (e) { /* keep previous list for this sport on failure */ }
   }));
+  const cacheChanged = updateSettledGameCache();
   rebuildGameIndex();
   gamesLoaded = true;
   const changed = JSON.stringify(DATA) !== before;
   if (changed) { cachedDailyPool = null; cachedDailyPoolKey = null; }
+  if (cacheChanged) { fsPatch({ settledGameCache }).catch(() => { /* best-effort; retry next cycle */ }); }
   return changed;
 }
 
-function isMidPoolBuild() {
+function isMidFormEntry() {
   const golfMeta = LEAGUES_META.find(l => l.isGolf);
-  return poolsActiveTab === 'create' && !(golfMeta && poolCreateSport === golfMeta.id);
+  const inPoolBuilder = poolsActiveTab === 'create' && !(golfMeta && poolCreateSport === golfMeta.id);
+  const inThirdParty = appSection === 'kalshi';
+  return inPoolBuilder || inThirdParty;
 }
 let liveTimer = null;
 function startLiveScoreChecks() {
-  refreshGameLists().then(async () => { await persistNewlySettledPicks(); await persistNewlySettledWeeklyBets(); await persistNewlySettledPlayerProps(); await persistNewlySettledGolfH2H(); await ensurePoolPlayerPropBoxScores(); await persistNewlySettledComboPool(); await persistNewlySettledGolfTeamPool(); await persistAccountAdjustmentsForChallenges(); if (profile && !isMidPoolBuild()) render(); });
+  refreshGameLists().then(async () => { await persistNewlySettledPicks(); await persistNewlySettledWeeklyBets(); await persistNewlySettledPlayerProps(); await persistNewlySettledGolfH2H(); await ensurePoolPlayerPropBoxScores(); await persistNewlySettledComboPool(); await persistNewlySettledGolfTeamPool(); await persistAccountAdjustmentsForChallenges(); if (profile && !isMidFormEntry()) render(); });
   if (liveTimer) return;
   liveTimer = setInterval(async () => {
     if (pendingSaveCount > 0) return; // don't rebuild the screen while a bet is mid-save
@@ -331,7 +356,7 @@ function startLiveScoreChecks() {
     const settledF = await persistNewlySettledComboPool();
     const settledG = await persistNewlySettledGolfTeamPool();
     const settledE = await persistAccountAdjustmentsForChallenges();
-    if (profile && !isMidPoolBuild() && (dataChanged || settledA || settledB || settledC || settledD || settledE || settledF || settledG)) render();
+    if (profile && !isMidFormEntry() && (dataChanged || settledA || settledB || settledC || settledD || settledE || settledF || settledG)) render();
   }, 60000);
 }
 
@@ -339,6 +364,7 @@ let profile = null;
 let allPicks = [];
 let players = [];
 let dailySlateData = null; // { dayKey, slate: [{sport,gameId,betType,gameLabel}] } — shared across all users, persisted in Firestore
+let settledGameCache = {}; // gameId -> {sport, game} snapshot of a finished game's final result, kept even after it ages out of the live fetch window so pending bets can still settle
 let activeTab = 'games';
 let activeSport = 'nfl';
 let gamesDateFilter = 'week'; // 'today' | 'tomorrow' | 'week'
@@ -811,8 +837,15 @@ function startPolling() {
         poolSwipeStackInitialized = false;
       }
       if (data.dailySlate && JSON.stringify(data.dailySlate) !== JSON.stringify(dailySlateData)) { dailySlateData = data.dailySlate; changed = true; }
+      if (data.settledGameCache) {
+        let cacheGrew = false;
+        Object.keys(data.settledGameCache).forEach(gid => {
+          if (!settledGameCache[gid]) { settledGameCache[gid] = data.settledGameCache[gid]; cacheGrew = true; }
+        });
+        if (cacheGrew) rebuildGameIndex();
+      }
       const friendSynced = await syncAcceptedFriendRequests();
-      if ((changed || friendSynced) && profile && !isMidPoolBuild()) render();
+      if ((changed || friendSynced) && profile && !isMidFormEntry()) render();
     } catch (e) { /* ignore transient poll errors */ }
   }, 8000);
 }
@@ -994,7 +1027,7 @@ function renderTabs() {
 
 async function completeLoginSetup() {
   const g = await loadGlobalData();
-  players = g.players; allPicks = g.picks; dailySlateData = g.dailySlate;
+  players = g.players; allPicks = g.picks; dailySlateData = g.dailySlate; settledGameCache = g.settledGameCache || {};
   appSection = 'pools';
   activeTab = 'requested';
   existingChallengeView = 'friends';
@@ -7551,7 +7584,7 @@ function renderLeaderboard() {
   if (profile) {
     try {
       const g = await loadGlobalData();
-      players = g.players; allPicks = g.picks; dailySlateData = g.dailySlate;
+      players = g.players; allPicks = g.picks; dailySlateData = g.dailySlate; settledGameCache = g.settledGameCache || {};
     } catch (e) {
       setupError = "Had trouble connecting to the shared board (" + describeFetchError(e) + ") — you can still continue.";
     }
