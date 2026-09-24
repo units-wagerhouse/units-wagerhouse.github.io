@@ -1046,6 +1046,7 @@ async function completeLoginSetup() {
         await cleanupHouseChallengesOnce();
         await resetMyAccountOnce();
         await clearChallengesPoolsAndUnitsOnce();
+        await clearStuckPendingChallengesAndPoolsOnce();
       if (!players.includes(profile.name)) { players.push(profile.name); await savePlayers(players); }
       await refreshGameLists();
 
@@ -7064,6 +7065,24 @@ async function cleanupAcceptedChallengesOnce() {
   }
   try { localStorage.setItem(FLAG, '1'); } catch (e) {}
 }
+async function clearStuckPendingChallengesAndPoolsOnce() {
+  const FLAG = 'ww_clear_stuck_pending_v1';
+  try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
+  const stuckIds = new Set(
+    allPicks.filter(p => p.poolType === 'challenge' && p.status !== 'settled' && p.status !== 'declined').map(p => p.id)
+  );
+  if (!stuckIds.size) { try { localStorage.setItem(FLAG, '1'); } catch (e) {} return; }
+  const before = allPicks.length;
+  allPicks = allPicks.filter(p => {
+    if (p.poolType === 'challenge' && stuckIds.has(p.id)) return false;
+    if (p.poolType === 'accountTx' && p.relatedChallengeId && stuckIds.has(p.relatedChallengeId)) return false;
+    return true;
+  });
+  if (allPicks.length !== before) {
+    try { await savePicks(allPicks); } catch (e) { return; /* retry next load if save failed */ }
+  }
+  try { localStorage.setItem(FLAG, '1'); } catch (e) {}
+}
 async function clearChallengesPoolsAndUnitsOnce() {
   const FLAG = 'ww_clear_challenges_pools_units_v4';
   try { if (localStorage.getItem(FLAG)) return; } catch (e) {}
@@ -7601,6 +7620,7 @@ function renderLeaderboard() {
         await cleanupHouseChallengesOnce();
         await resetMyAccountOnce();
         await clearChallengesPoolsAndUnitsOnce();
+        await clearStuckPendingChallengesAndPoolsOnce();
         if (!players.includes(profile.name)) { players.push(profile.name); await savePlayers(players); }
         await refreshGameLists();
 
