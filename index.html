@@ -462,8 +462,11 @@ function computeYahtzeeTotal(scorecard) {
   const yahtzeeBonus = (sc.yahtzeeBonusCount || 0) * 100;
   return { upper, bonus, lower, yahtzeeBonus, grand: upper + bonus + lower + yahtzeeBonus };
 }
-function computeYahtzeeCombinedTotal(scorecards) {
-  return (scorecards || []).reduce((s, sc) => s + computeYahtzeeTotal(sc).grand, 0);
+function computeYahtzeeCombinedTotal(scorecards, variant) {
+  return (scorecards || []).reduce((s, sc, i) => {
+    const mult = variant === 'triple' ? (i + 1) : 1;
+    return s + computeYahtzeeTotal(sc).grand * mult;
+  }, 0);
 }
 let scoreKeeperSetupName = '';
 let scoreKeeperSetupPlayers = []; // [{name, isGuest, uid?}]
@@ -3183,7 +3186,7 @@ function computeScoreKeeperWinner(game) {
   if (game.mode === 'yahtzee') {
     const scores = game.yahtzeeScores || {};
     let best = null;
-    players.forEach(p => { const total = computeYahtzeeCombinedTotal(scores[p.name]); if (best === null || total > best.total) best = { name: p.name, total }; });
+    players.forEach(p => { const total = computeYahtzeeCombinedTotal(scores[p.name], game.yahtzeeVariant); if (best === null || total > best.total) best = { name: p.name, total }; });
     return best ? best.name : null;
   }
   const rounds = game.rounds || [];
@@ -3201,7 +3204,7 @@ async function endScoreKeeperGame(gameId) {
   const finalScores = game.mode === 'manual'
     ? Object.fromEntries(players.map(p => [p.name, (game.manualRecord || {})[p.name] || 0]))
     : game.mode === 'yahtzee'
-    ? Object.fromEntries(players.map(p => [p.name, computeYahtzeeCombinedTotal((game.yahtzeeScores || {})[p.name])]))
+    ? Object.fromEntries(players.map(p => [p.name, computeYahtzeeCombinedTotal((game.yahtzeeScores || {})[p.name], game.yahtzeeVariant)]))
     : Object.fromEntries(players.map(p => [p.name, (game.rounds || []).reduce((s, r) => s + (r[p.name] || 0), 0)]));
   const prev = { status: game.status, winner: game.winner, finalScores: game.finalScores };
   allPicks[idx].status = 'completed';
@@ -3366,15 +3369,23 @@ function renderScoreKeeperPlay() {
       const sheets = scores[yahtzeeViewingPlayer] || [];
       const editable = canEditColumn(viewingPlayerObj);
       const { tableWrap, colTotals } = buildScorecardTable(
-        ['Game 1','Game 2','Game 3'],
+        ['Game 1 (\u00d71)','Game 2 (\u00d72)','Game 3 (\u00d73)'],
         () => editable,
         (ci, key) => key === '__sheet__' ? sheets[ci] : (sheets[ci] || {})[key],
         (ci, key, val) => setYahtzeeCell(yahtzeeViewingPlayer, ci, key, val)
       );
+      // Insert a multiplied-value row right after the table's own TOTAL row, since triple Yahtzee scores
+      // each column normally but then multiplies the column TOTAL by 1x/2x/3x before summing.
+      const table = tableWrap.querySelector('table');
+      const multTr = document.createElement('tr');
+      const multLabelTd = document.createElement('td'); multLabelTd.textContent = '\u00d7 Multiplier'; multLabelTd.style.cssText = 'padding:5px 6px;color:var(--accent);font-weight:700;font-size:11px;';
+      multTr.appendChild(multLabelTd);
+      colTotals.forEach((t, i) => { const td = document.createElement('td'); td.textContent = String(t.grand * (i + 1)); td.style.cssText = 'padding:5px 6px;text-align:center;color:var(--accent);font-weight:800;font-size:12px;'; multTr.appendChild(td); });
+      table.appendChild(multTr);
       wrap.appendChild(tableWrap);
-      const combined = colTotals.reduce((s,t) => s + t.grand, 0);
+      const combined = colTotals.reduce((s,t,i) => s + t.grand * (i + 1), 0);
       wrap.appendChild(el('div', null, `Combined Total: ${combined}`)).style.cssText = 'font-size:14px;font-weight:800;text-align:center;margin-bottom:8px;';
-      wrap.appendChild(el('div', 'setup-hint', editable ? "These three sheets are yours — fill them in as you play. Switch the menu above to check anyone else's sheets." : `Viewing ${yahtzeeViewingPlayer}'s sheets \u2014 read-only.`));
+      wrap.appendChild(el('div', 'setup-hint', (editable ? "These three sheets are yours — fill them in as you play. Switch the menu above to check anyone else's sheets. " : `Viewing ${yahtzeeViewingPlayer}'s sheets \u2014 read-only. `) + 'Each column scores normally, then Game 2\'s total counts double and Game 3\'s counts triple.'));
     }
 
     if (game.status !== 'completed') {
