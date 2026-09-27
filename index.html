@@ -437,6 +437,8 @@ let thirdPartyMode = 'bets'; // 'bets' | 'scorekeeper'
 let scoreKeeperView = 'list'; // 'list' | 'setup' | 'play'
 let scoreKeeperSetupMode = 'rounds'; // 'rounds' | 'manual'
 let scoreKeeperSetupWinDirection = 'high'; // 'high' | 'low' - which score wins
+let scoreKeeperSetupYahtzeeVariant = 'single'; // 'single' | 'triple'
+let yahtzeeViewingPlayer = null; // player name currently shown in triple mode's full-screen sheet
 const YAHTZEE_CATEGORIES = [
   { key: 'ones', label: 'Ones', section: 'upper' },
   { key: 'twos', label: 'Twos', section: 'upper' },
@@ -459,6 +461,9 @@ function computeYahtzeeTotal(scorecard) {
   const lower = ['threeKind','fourKind','fullHouse','smStraight','lgStraight','yahtzee','chance'].reduce((s,k) => s + (sc[k] || 0), 0);
   const yahtzeeBonus = (sc.yahtzeeBonusCount || 0) * 100;
   return { upper, bonus, lower, yahtzeeBonus, grand: upper + bonus + lower + yahtzeeBonus };
+}
+function computeYahtzeeCombinedTotal(scorecards) {
+  return (scorecards || []).reduce((s, sc) => s + computeYahtzeeTotal(sc).grand, 0);
 }
 let scoreKeeperSetupName = '';
 let scoreKeeperSetupPlayers = []; // [{name, isGuest, uid?}]
@@ -3019,7 +3024,7 @@ function renderScoreKeeperSection() {
     const baseSubtitle = game.mode === 'rounds' ? `${(game.rounds || []).length} round${(game.rounds || []).length === 1 ? '' : 's'}` : game.mode === 'yahtzee' ? 'Yahtzee scorecard' : 'Simple win/loss record';
     const subtitle = game.status === 'completed' ? `${baseSubtitle} \u00b7 \ud83c\udfc6 ${game.winner || 'No winner'}` : baseSubtitle;
     card.appendChild(el('div', null, `${(game.players || []).map(p => p.name).join(', ')} \u00b7 ${subtitle}`)).style.cssText = 'font-size:11px;color:var(--text-faint);margin-top:2px;';
-    card.onclick = () => { scoreKeeperActiveId = game.id; scoreKeeperView = 'play'; scoreKeeperCurrentPlayerIdx = 0; scoreKeeperRoundDraft = {}; render(); };
+    card.onclick = () => { scoreKeeperActiveId = game.id; scoreKeeperView = 'play'; scoreKeeperCurrentPlayerIdx = 0; scoreKeeperRoundDraft = {}; yahtzeeViewingPlayer = null; render(); };
     const delBtn = el('button', null, '\u2715');
     delBtn.style.cssText = 'position:relative;float:right;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;width:26px;height:26px;font-size:11px;margin-top:-32px;';
     delBtn.onclick = async (e) => {
@@ -3068,6 +3073,20 @@ function renderScoreKeeperSetup() {
       winDirToggle.appendChild(pill);
     });
     wrap.appendChild(winDirToggle);
+  }
+
+  if (scoreKeeperSetupMode === 'yahtzee') {
+    wrap.appendChild(el('label', null, 'Variant'));
+    const variantToggle = el('div', 'league-scroller');
+    [['single','Single Yahtzee'],['triple','Triple Yahtzee']].forEach(([id,label]) => {
+      const pill = el('button', 'league-pill' + (scoreKeeperSetupYahtzeeVariant === id ? ' active' : ''), label);
+      pill.onclick = () => { scoreKeeperSetupYahtzeeVariant = id; render(); };
+      variantToggle.appendChild(pill);
+    });
+    wrap.appendChild(variantToggle);
+    if (scoreKeeperSetupYahtzeeVariant === 'triple') {
+      wrap.appendChild(el('div', 'setup-hint', "Each player fills in three scorecards at once. Your screen shows just your own three sheets — use the menu at the top to check anyone else's."));
+    }
   }
 
   wrap.appendChild(el('label', null, `Players (${scoreKeeperSetupPlayers.length})`));
@@ -3130,6 +3149,7 @@ function renderScoreKeeperSetup() {
       gameName: scoreKeeperSetupName.trim() || null,
       mode: scoreKeeperSetupMode,
       winDirection: scoreKeeperSetupWinDirection,
+      yahtzeeVariant: scoreKeeperSetupYahtzeeVariant,
       players: scoreKeeperSetupPlayers.slice(),
       rounds: [], manualRecord: {}, yahtzeeScores: {},
       status: 'active', winner: null, finalScores: null,
@@ -3163,7 +3183,7 @@ function computeScoreKeeperWinner(game) {
   if (game.mode === 'yahtzee') {
     const scores = game.yahtzeeScores || {};
     let best = null;
-    players.forEach(p => { const total = computeYahtzeeTotal(scores[p.name]).grand; if (best === null || total > best.total) best = { name: p.name, total }; });
+    players.forEach(p => { const total = computeYahtzeeCombinedTotal(scores[p.name]); if (best === null || total > best.total) best = { name: p.name, total }; });
     return best ? best.name : null;
   }
   const rounds = game.rounds || [];
@@ -3181,7 +3201,7 @@ async function endScoreKeeperGame(gameId) {
   const finalScores = game.mode === 'manual'
     ? Object.fromEntries(players.map(p => [p.name, (game.manualRecord || {})[p.name] || 0]))
     : game.mode === 'yahtzee'
-    ? Object.fromEntries(players.map(p => [p.name, computeYahtzeeTotal((game.yahtzeeScores || {})[p.name]).grand]))
+    ? Object.fromEntries(players.map(p => [p.name, computeYahtzeeCombinedTotal((game.yahtzeeScores || {})[p.name])]))
     : Object.fromEntries(players.map(p => [p.name, (game.rounds || []).reduce((s, r) => s + (r[p.name] || 0), 0)]));
   const prev = { status: game.status, winner: game.winner, finalScores: game.finalScores };
   allPicks[idx].status = 'completed';
@@ -3198,7 +3218,7 @@ function renderScoreKeeperPlay() {
 
   const backBtn = el('button', null, '\u2190 Back to games');
   backBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;margin-bottom:10px;';
-  backBtn.onclick = () => { scoreKeeperView = 'list'; scoreKeeperActiveId = null; render(); };
+  backBtn.onclick = () => { scoreKeeperView = 'list'; scoreKeeperActiveId = null; yahtzeeViewingPlayer = null; render(); };
   wrap.appendChild(backBtn);
   wrap.appendChild(el('div', null, game.gameName || 'Score Keeper Game')).style.cssText = 'font-size:16px;font-weight:800;margin-bottom:8px;';
 
@@ -3245,78 +3265,117 @@ function renderScoreKeeperPlay() {
     const isCreator = game.creator === profile.name;
     const canEditColumn = (p) => game.status !== 'completed' && (p.uid === profile.uid || (p.isGuest && isCreator));
     const scores = game.yahtzeeScores || {};
+    const variant = game.yahtzeeVariant || 'single';
 
-    async function setYahtzeeCell(playerName, key, value) {
+    async function setYahtzeeCell(playerName, sheetIdx, key, value) {
       const gIdx = allPicks.findIndex(x => x.id === game.id);
       if (gIdx === -1) return;
       const prevScores = JSON.parse(JSON.stringify(allPicks[gIdx].yahtzeeScores || {}));
-      const playerScores = { ...(allPicks[gIdx].yahtzeeScores || {})[playerName] };
-      if (value === '' || value === null) delete playerScores[key]; else playerScores[key] = value;
-      allPicks[gIdx].yahtzeeScores = { ...(allPicks[gIdx].yahtzeeScores || {}), [playerName]: playerScores };
+      const playerSheets = ((allPicks[gIdx].yahtzeeScores || {})[playerName] || []).slice();
+      while (playerSheets.length <= sheetIdx) playerSheets.push({});
+      const sheet = { ...playerSheets[sheetIdx] };
+      if (value === '' || value === null) delete sheet[key]; else sheet[key] = value;
+      playerSheets[sheetIdx] = sheet;
+      allPicks[gIdx].yahtzeeScores = { ...(allPicks[gIdx].yahtzeeScores || {}), [playerName]: playerSheets };
       allPicks[gIdx].lastUpdated = new Date().toISOString();
       try { await savePicks(allPicks); render(); }
       catch (e) { allPicks[gIdx].yahtzeeScores = prevScores; alert("Couldn't save (" + describeFetchError(e) + ") — try again."); }
     }
 
-    const tableWrap = el('div'); tableWrap.style.cssText = 'overflow-x:auto;margin-bottom:14px;';
-    const table = document.createElement('table');
-    table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;';
-    const headRow = document.createElement('tr');
-    const cornerTh = document.createElement('th'); cornerTh.style.cssText = 'padding:6px;border-bottom:1px solid var(--border);';
-    headRow.appendChild(cornerTh);
-    players.forEach(p => {
-      const th = document.createElement('th'); th.textContent = p.name + (p.uid === profile.uid ? ' (you)' : ''); th.style.cssText = 'padding:6px;text-align:center;color:var(--text);border-bottom:1px solid var(--border);white-space:nowrap;font-size:11px;'; headRow.appendChild(th);
-    });
-    table.appendChild(headRow);
+    function buildScorecardTable(columns, isColEditable, getVal, setVal) {
+      const tableWrap = el('div'); tableWrap.style.cssText = 'overflow-x:auto;margin-bottom:14px;';
+      const table = document.createElement('table');
+      table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;';
+      const headRow = document.createElement('tr');
+      const cornerTh = document.createElement('th'); cornerTh.style.cssText = 'padding:6px;border-bottom:1px solid var(--border);';
+      headRow.appendChild(cornerTh);
+      columns.forEach(colLabel => { const th = document.createElement('th'); th.textContent = colLabel; th.style.cssText = 'padding:6px;text-align:center;color:var(--text);border-bottom:1px solid var(--border);white-space:nowrap;font-size:11px;'; headRow.appendChild(th); });
+      table.appendChild(headRow);
 
-    function addSectionLabelRow(label) {
-      const tr = document.createElement('tr');
-      const td = document.createElement('td'); td.textContent = label; td.colSpan = players.length + 1;
-      td.style.cssText = 'padding:6px 4px 2px;font-size:10px;font-weight:800;color:var(--text-faint);text-transform:uppercase;';
-      tr.appendChild(td);
-      table.appendChild(tr);
-    }
-    function addCategoryRow(cat) {
-      const tr = document.createElement('tr');
-      const labelTd = document.createElement('td'); labelTd.textContent = cat.label; labelTd.style.cssText = 'padding:5px 6px;color:var(--text-dim);white-space:nowrap;';
-      tr.appendChild(labelTd);
-      players.forEach(p => {
-        const td = document.createElement('td'); td.style.cssText = 'padding:3px;text-align:center;';
-        const val = (scores[p.name] || {})[cat.key];
-        if (canEditColumn(p)) {
-          const input = document.createElement('input'); input.type = 'number'; input.value = val !== undefined ? val : '';
-          input.style.cssText = 'width:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 2px;font-size:12px;text-align:center;box-sizing:border-box;';
-          input.onchange = () => setYahtzeeCell(p.name, cat.key, input.value === '' ? '' : parseFloat(input.value));
-          td.appendChild(input);
-        } else {
-          td.textContent = val !== undefined ? val : '\u2014';
-        }
+      function addSectionLabelRow(label) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td'); td.textContent = label; td.colSpan = columns.length + 1;
+        td.style.cssText = 'padding:6px 4px 2px;font-size:10px;font-weight:800;color:var(--text-faint);text-transform:uppercase;';
         tr.appendChild(td);
-      });
-      table.appendChild(tr);
+        table.appendChild(tr);
+      }
+      function addCategoryRow(cat) {
+        const tr = document.createElement('tr');
+        const labelTd = document.createElement('td'); labelTd.textContent = cat.label; labelTd.style.cssText = 'padding:5px 6px;color:var(--text-dim);white-space:nowrap;';
+        tr.appendChild(labelTd);
+        columns.forEach((colLabel, ci) => {
+          const td = document.createElement('td'); td.style.cssText = 'padding:3px;text-align:center;';
+          const val = getVal(ci, cat.key);
+          if (isColEditable(ci)) {
+            const input = document.createElement('input'); input.type = 'number'; input.value = val !== undefined ? val : '';
+            input.style.cssText = 'width:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 2px;font-size:12px;text-align:center;box-sizing:border-box;';
+            input.onchange = () => setVal(ci, cat.key, input.value === '' ? '' : parseFloat(input.value));
+            td.appendChild(input);
+          } else {
+            td.textContent = val !== undefined ? val : '\u2014';
+          }
+          tr.appendChild(td);
+        });
+        table.appendChild(tr);
+      }
+
+      addSectionLabelRow('Upper Section');
+      YAHTZEE_CATEGORIES.filter(c => c.section === 'upper').forEach(addCategoryRow);
+      const colTotals = columns.map((_, ci) => computeYahtzeeTotal(getVal(ci, '__sheet__')));
+      const bonusTr = document.createElement('tr');
+      const bonusLabelTd = document.createElement('td'); bonusLabelTd.textContent = 'Bonus (63+)'; bonusLabelTd.style.cssText = 'padding:5px 6px;color:var(--text-faint);font-size:11px;';
+      bonusTr.appendChild(bonusLabelTd);
+      colTotals.forEach(t => { const td = document.createElement('td'); td.textContent = t.bonus ? '+35' : '\u2014'; td.style.cssText = 'padding:5px 6px;text-align:center;color:var(--text-faint);font-size:11px;'; bonusTr.appendChild(td); });
+      table.appendChild(bonusTr);
+
+      addSectionLabelRow('Lower Section');
+      YAHTZEE_CATEGORIES.filter(c => c.section === 'lower').forEach(addCategoryRow);
+
+      const grandTr = document.createElement('tr');
+      const grandLabelTd = document.createElement('td'); grandLabelTd.textContent = 'TOTAL'; grandLabelTd.style.cssText = 'padding:6px;font-weight:800;border-top:2px solid var(--border);';
+      grandTr.appendChild(grandLabelTd);
+      colTotals.forEach(t => { const td = document.createElement('td'); td.textContent = String(t.grand); td.style.cssText = 'padding:6px;text-align:center;font-weight:800;border-top:2px solid var(--border);'; grandTr.appendChild(td); });
+      table.appendChild(grandTr);
+      tableWrap.appendChild(table);
+      return { tableWrap, colTotals };
     }
 
-    addSectionLabelRow('Upper Section');
-    YAHTZEE_CATEGORIES.filter(c => c.section === 'upper').forEach(addCategoryRow);
-    const upperTotals = players.map(p => computeYahtzeeTotal(scores[p.name]));
-    const bonusTr = document.createElement('tr');
-    const bonusLabelTd = document.createElement('td'); bonusLabelTd.textContent = 'Bonus (63+)'; bonusLabelTd.style.cssText = 'padding:5px 6px;color:var(--text-faint);font-size:11px;';
-    bonusTr.appendChild(bonusLabelTd);
-    upperTotals.forEach(t => { const td = document.createElement('td'); td.textContent = t.bonus ? '+35' : '\u2014'; td.style.cssText = 'padding:5px 6px;text-align:center;color:var(--text-faint);font-size:11px;'; bonusTr.appendChild(td); });
-    table.appendChild(bonusTr);
+    if (variant === 'single') {
+      const { tableWrap } = buildScorecardTable(
+        players.map(p => p.name + (p.uid === profile.uid ? ' (you)' : '')),
+        (ci) => canEditColumn(players[ci]),
+        (ci, key) => key === '__sheet__' ? (scores[players[ci].name] || [])[0] : ((scores[players[ci].name] || [])[0] || {})[key],
+        (ci, key, val) => setYahtzeeCell(players[ci].name, 0, key, val)
+      );
+      wrap.appendChild(tableWrap);
+      wrap.appendChild(el('div', 'setup-hint', "Each column syncs across everyone's phone — fill in your own scores as you go, and check back to see how everyone else is doing."));
+    } else {
+      // Triple Yahtzee: full-screen single-player view (3 sheets) with a menu to switch whose sheets you're looking at.
+      if (!yahtzeeViewingPlayer || !players.some(p => p.name === yahtzeeViewingPlayer)) {
+        const mine = players.find(p => p.uid === profile.uid);
+        yahtzeeViewingPlayer = mine ? mine.name : players[0].name;
+      }
+      const filterSel = el('select');
+      filterSel.style.cssText = 'width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:9px;font-size:13px;margin-bottom:10px;box-sizing:border-box;font-weight:700;';
+      players.forEach(p => { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name + (p.uid === profile.uid ? ' (you)' : ''); filterSel.appendChild(o); });
+      filterSel.value = yahtzeeViewingPlayer;
+      filterSel.onchange = () => { yahtzeeViewingPlayer = filterSel.value; render(); };
+      wrap.appendChild(filterSel);
 
-    addSectionLabelRow('Lower Section');
-    YAHTZEE_CATEGORIES.filter(c => c.section === 'lower').forEach(addCategoryRow);
-
-    const grandTr = document.createElement('tr');
-    const grandLabelTd = document.createElement('td'); grandLabelTd.textContent = 'TOTAL'; grandLabelTd.style.cssText = 'padding:6px;font-weight:800;border-top:2px solid var(--border);';
-    grandTr.appendChild(grandLabelTd);
-    upperTotals.forEach(t => { const td = document.createElement('td'); td.textContent = String(t.grand); td.style.cssText = 'padding:6px;text-align:center;font-weight:800;border-top:2px solid var(--border);'; grandTr.appendChild(td); });
-    table.appendChild(grandTr);
-
-    tableWrap.appendChild(table);
-    wrap.appendChild(tableWrap);
-    wrap.appendChild(el('div', 'setup-hint', "Each column syncs across everyone's phone — fill in your own scores as you go, and check back to see how everyone else is doing."));
+      const viewingPlayerObj = players.find(p => p.name === yahtzeeViewingPlayer);
+      const sheets = scores[yahtzeeViewingPlayer] || [];
+      const editable = canEditColumn(viewingPlayerObj);
+      const { tableWrap, colTotals } = buildScorecardTable(
+        ['Game 1','Game 2','Game 3'],
+        () => editable,
+        (ci, key) => key === '__sheet__' ? sheets[ci] : (sheets[ci] || {})[key],
+        (ci, key, val) => setYahtzeeCell(yahtzeeViewingPlayer, ci, key, val)
+      );
+      wrap.appendChild(tableWrap);
+      const combined = colTotals.reduce((s,t) => s + t.grand, 0);
+      wrap.appendChild(el('div', null, `Combined Total: ${combined}`)).style.cssText = 'font-size:14px;font-weight:800;text-align:center;margin-bottom:8px;';
+      wrap.appendChild(el('div', 'setup-hint', editable ? "These three sheets are yours — fill them in as you play. Switch the menu above to check anyone else's sheets." : `Viewing ${yahtzeeViewingPlayer}'s sheets \u2014 read-only.`));
+    }
 
     if (game.status !== 'completed') {
       const overBtn = el('button', 'lock-btn', 'Game Over');
@@ -3407,7 +3466,7 @@ function renderScoreKeeperPlay() {
 
   const endBtn = el('button', null, 'Back to Game List');
   endBtn.style.cssText = 'width:100%;margin-top:14px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:8px;font-size:11px;font-weight:700;';
-  endBtn.onclick = () => { scoreKeeperView = 'list'; scoreKeeperActiveId = null; render(); };
+  endBtn.onclick = () => { scoreKeeperView = 'list'; scoreKeeperActiveId = null; yahtzeeViewingPlayer = null; render(); };
   wrap.appendChild(endBtn);
   return wrap;
 }
