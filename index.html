@@ -437,6 +437,7 @@ let thirdPartyMode = 'bets'; // 'bets' | 'scorekeeper'
 let scoreKeeperView = 'list'; // 'list' | 'setup' | 'play'
 let scoreKeeperSetupMode = 'rounds'; // 'rounds' | 'manual'
 let scoreKeeperSetupWinDirection = 'high'; // 'high' | 'low' - which score wins
+let scoreKeeperSetupMatchValue = 1; // units per point (rounds/yahtzee) or per win (manual) - how the final score converts to units
 let scoreKeeperSetupYahtzeeVariant = 'single'; // 'single' | 'triple'
 let yahtzeeViewingPlayer = null; // player name currently shown in triple mode's full-screen sheet
 const YAHTZEE_CATEGORIES = [
@@ -511,6 +512,7 @@ let poolBuilderDateFilter = 'week'; // 'today' | 'tomorrow' | 'week'
 let poolBuilderBuyIn = 10;
 let poolBuilderBudget = 10;
 let poolBuilderMaxPerPick = 10;
+let poolBuilderMatchValue = 1; // multiplier applied to final units won/lost from this pool
 let poolBuilderPaid = 1;
 let poolBuilderMustPickAll = true;
 let poolBuilderVisibility = 'public';
@@ -1706,11 +1708,8 @@ function renderFriendsScreen() {
           [profile.name, f.name].forEach(name => {
             const c = cat[name];
             const row = el('div'); row.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:2px 0;color:var(--text-dim);';
-            if (catKey === 'sides') {
-              row.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''}</span><span style="font-weight:700;">${c.wins} win${c.wins === 1 ? '' : 's'}</span>`;
-            } else {
-              row.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''}</span><span style="font-weight:700;color:${c.units > 0 ? 'var(--accent)' : (c.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${c.units > 0 ? '+' : ''}${Math.round(c.units)}u</span>`;
-            }
+            const displayVal = catKey === 'sides' ? Math.round(c.units * 100) / 100 : Math.round(c.units);
+            row.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''}</span><span style="font-weight:700;color:${c.units > 0 ? 'var(--accent)' : (c.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${c.units > 0 ? '+' : ''}${displayVal}u</span>`;
             catWrap.appendChild(row);
           });
           h2hCard.appendChild(catWrap);
@@ -2913,7 +2912,7 @@ function renderScoreKeeperSection() {
   const wrap = el('div');
   const myGames = allPicks.filter(p => p.poolType === 'scoreKeeperGame' && (p.creator === profile.name || (p.players || []).some(pl => pl.uid === profile.uid)));
   const newBtn = el('button', 'lock-btn', '+ New Score Keeper Game');
-  newBtn.onclick = () => { scoreKeeperView = 'setup'; scoreKeeperSetupName = ''; scoreKeeperSetupMode = 'rounds'; scoreKeeperSetupWinDirection = 'high'; scoreKeeperSetupPlayers = []; scoreKeeperGuestInput = ''; render(); };
+  newBtn.onclick = () => { scoreKeeperView = 'setup'; scoreKeeperSetupName = ''; scoreKeeperSetupMode = 'rounds'; scoreKeeperSetupWinDirection = 'high'; scoreKeeperSetupMatchValue = 1; scoreKeeperSetupPlayers = []; scoreKeeperGuestInput = ''; render(); };
   wrap.appendChild(newBtn);
 
   if (!myGames.length) {
@@ -2947,7 +2946,7 @@ function renderScoreKeeperSection() {
 function renderScoreKeeperSetup() {
   const wrap = el('div');
   const backBtn = el('button', null, '\u2190 Back');
-  backBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:700;margin-bottom:14px;';
+  backBtn.style.cssText = 'display:block;background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:700;margin-bottom:14px;';
   backBtn.onclick = () => { scoreKeeperView = 'list'; render(); };
   wrap.appendChild(backBtn);
 
@@ -2991,6 +2990,15 @@ function renderScoreKeeperSetup() {
       wrap.appendChild(el('div', 'setup-hint', "Each player fills in three scorecards at once. Your screen shows just your own three sheets — use the menu at the top to check anyone else's."));
     }
   }
+
+  wrap.appendChild(el('label', null, 'Match Value'));
+  const matchValueInput = el('input'); matchValueInput.type = 'number'; matchValueInput.step = 'any'; matchValueInput.value = String(scoreKeeperSetupMatchValue);
+  matchValueInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:6px;box-sizing:border-box;';
+  matchValueInput.oninput = () => { scoreKeeperSetupMatchValue = matchValueInput.value; };
+  wrap.appendChild(matchValueInput);
+  wrap.appendChild(el('div', 'setup-hint', scoreKeeperSetupMode === 'manual'
+    ? "Units per win. When this game ends, each player's units vs. everyone else are their win-count difference times this value."
+    : "Units per point. When this game ends, each player's units vs. everyone else are their final-score difference times this value — this feeds into your Sides record with friends."));
 
   wrap.appendChild(el('label', null, `Players (${scoreKeeperSetupPlayers.length})`));
   scoreKeeperSetupPlayers.forEach((p, i) => {
@@ -3052,6 +3060,7 @@ function renderScoreKeeperSetup() {
       gameName: scoreKeeperSetupName.trim() || null,
       mode: scoreKeeperSetupMode,
       winDirection: scoreKeeperSetupWinDirection,
+      matchValue: parseFloat(scoreKeeperSetupMatchValue) || 0,
       yahtzeeVariant: scoreKeeperSetupYahtzeeVariant,
       players: scoreKeeperSetupPlayers.slice(),
       rounds: [], manualRecord: {}, yahtzeeScores: {},
@@ -3869,6 +3878,13 @@ function renderPoolBuilder() {
   cfgCard.appendChild(maxPerPickInput);
   cfgCard.appendChild(el('div', 'setup-hint', "The most house units anyone can put on a single pick. Every pick still needs at least 1 unit \u2014 no game can be left with zero weight."));
 
+  cfgCard.appendChild(el('label', null, 'Match Value'));
+  const matchValuePoolInput = el('input'); matchValuePoolInput.type = 'number'; matchValuePoolInput.step = 'any'; matchValuePoolInput.value = String(poolBuilderMatchValue);
+  matchValuePoolInput.style.cssText = 'width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;margin-bottom:6px;box-sizing:border-box;';
+  matchValuePoolInput.oninput = () => { poolBuilderMatchValue = matchValuePoolInput.value; };
+  cfgCard.appendChild(matchValuePoolInput);
+  cfgCard.appendChild(el('div', 'setup-hint', "Multiplies everyone's final units from this pool \u2014 leave at 1 for normal weight, or raise it to make this pool count for more in your records with friends."));
+
   wrap.appendChild(cfgCard);
 
   const submitBtn = el('button', 'lock-btn', 'Submit Pool');
@@ -3881,6 +3897,7 @@ function renderPoolBuilder() {
     const houseUnitsBudget = parseFloat(budgetInput.value);
     const paidPositions = 1; // no prize to split — top finisher is simply the winner
     const maxUnitsPerPick = parseFloat(maxPerPickInput.value);
+    const matchValue = parseFloat(matchValuePoolInput.value) || 0;
     submitErr.textContent = '';
     if (!houseUnitsBudget || houseUnitsBudget <= 0) { submitErr.textContent = 'Enter a valid unit budget.'; return; }
     if (poolBuilderMustPickAll && houseUnitsBudget < Math.max(10, poolBuilderLegs.length)) { submitErr.textContent = `With "must pick every game" on, you need at least ${Math.max(10, poolBuilderLegs.length)} units for ${poolBuilderLegs.length} games.`; return; }
@@ -3895,7 +3912,7 @@ function renderPoolBuilder() {
       sport: poolBuilderLegs[0].sport, gameLabel: poolBuilderLegs.map(l => l.gameLabel).join(' + '),
       name: poolBuilderName.trim() || null,
       legs: poolBuilderLegs.slice(),
-      houseUnitsBudget, paidPositions, maxUnitsPerPick, mustPickAll: poolBuilderMustPickAll,
+      houseUnitsBudget, paidPositions, maxUnitsPerPick, mustPickAll: poolBuilderMustPickAll, matchValue,
       visibility: poolVisibility, groupId: poolGroupId, targetFriend: poolTargetFriend,
       status: 'open', participants: [],
       timestamp: new Date().toISOString()
@@ -3906,7 +3923,7 @@ function renderPoolBuilder() {
       await savePicks(allPicks);
       poolBuilderLegs = [];
       poolBuilderName = '';
-      poolBuilderBuyIn = 10; poolBuilderBudget = 10; poolBuilderMaxPerPick = 10; poolBuilderPaid = 1; poolBuilderVisibility = 'public'; poolBuilderMustPickAll = true;
+      poolBuilderBuyIn = 10; poolBuilderBudget = 10; poolBuilderMaxPerPick = 10; poolBuilderPaid = 1; poolBuilderVisibility = 'public'; poolBuilderMustPickAll = true; poolBuilderMatchValue = 1;
       poolLegDraft = { league: '', gameId: '', betType: '', propName: '', propCat: '', propLine: '' };
       poolBuilderOpen = false;
       poolsActiveTab = 'accepted';
@@ -4038,7 +4055,8 @@ function poolParticipantScore(pool, participant) {
     if (r.status === 'win') total += pick.confUnits;
     else if (r.status === 'loss') total -= pick.confUnits;
   });
-  return { total, allSettled };
+  const matchValue = pool.matchValue !== undefined ? pool.matchValue : 1;
+  return { total: total * matchValue, allSettled };
 }
 function computeGolfTeamParticipantScore(pool, participant) {
   const field = (golfFieldCache && golfFieldCache.tournamentId === pool.tournamentId) ? golfFieldCache : null;
@@ -6135,7 +6153,7 @@ function computeH2HCategoryBreakdown(nameA, nameB, resetPoints) {
   const sidesStart = new Date(rp.sides || '1970-01-01T00:00:00.000Z');
   const singles = { [nameA]: { units: 0 }, [nameB]: { units: 0 } };
   const pools = { [nameA]: { units: 0 }, [nameB]: { units: 0 } };
-  const sides = { [nameA]: { wins: 0 }, [nameB]: { wins: 0 } };
+  const sides = { [nameA]: { wins: 0, units: 0 }, [nameB]: { wins: 0, units: 0 } };
 
   allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.propType !== 'golf_team' && p.status === 'accepted' && new Date(p.timestamp) >= singlesStart &&
     ((p.creator === nameA && p.acceptedBy === nameB) || (p.creator === nameB && p.acceptedBy === nameA))
@@ -6166,9 +6184,15 @@ function computeH2HCategoryBreakdown(nameA, nameB, resetPoints) {
   allPicks.filter(p => p.poolType === 'scoreKeeperGame' && p.status === 'completed' && new Date(p.timestamp) >= sidesStart &&
     (p.players || []).some(pl => pl.name === nameA) && (p.players || []).some(pl => pl.name === nameB)
   ).forEach(game => {
-    if (!game.winner) return;
-    if (game.winner === nameA) { sides[nameA].wins++; }
-    else if (game.winner === nameB) { sides[nameB].wins++; }
+    if (game.winner === nameA) sides[nameA].wins++;
+    else if (game.winner === nameB) sides[nameB].wins++;
+    const finalScores = game.finalScores || {};
+    if (finalScores[nameA] === undefined || finalScores[nameB] === undefined) return;
+    const unitValue = game.matchValue !== undefined ? game.matchValue : 1;
+    const dir = (game.mode === 'rounds' && game.winDirection === 'low') ? -1 : 1; // manual/yahtzee: higher is always better
+    const diff = (finalScores[nameA] - finalScores[nameB]) * dir;
+    sides[nameA].units += diff * unitValue;
+    sides[nameB].units += -diff * unitValue;
   });
 
   return { singles, pools, sides };
