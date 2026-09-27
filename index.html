@@ -1486,63 +1486,22 @@ function renderFriendsScreen() {
       const lbCard = el('div'); lbCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin-top:10px;';
 
       const stats = computeGroupLeaderboardStats(grp);
-      const matchWins = grp.matchWins || {};
       const ranked = Object.keys(stats).map(name => ({ name, ...stats[name] })).sort((a,b) => b.units - a.units);
       lbCard.appendChild(el('div', null, 'Current standings')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:6px;';
       ranked.forEach((s, i) => {
         const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;';
-        const leftSpan = el('span', null, `${i + 1}. ${s.name}${s.name === profile.name ? ' (you)' : ''} `);
-        const winsSpan = el('span', null, `${matchWins[s.name] || 0} match wins`);
-        winsSpan.style.cssText = 'color:var(--text-faint);text-decoration:underline;cursor:pointer;';
-        const groupHistKey = grp.id + '_' + s.name;
-        winsSpan.onclick = () => { matchWinHistoryPanelOpen[groupHistKey] = !matchWinHistoryPanelOpen[groupHistKey]; render(); };
-        leftSpan.appendChild(winsSpan);
-        r.appendChild(leftSpan);
-        const valSpan = el('span', null, `${s.units > 0 ? '+' : ''}${Math.round(s.units)}u`);
-        valSpan.style.cssText = `font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};`;
-        r.appendChild(valSpan);
+        r.innerHTML = `<span>${i + 1}. ${s.name}${s.name === profile.name ? ' (you)' : ''}</span><span style="font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${s.units > 0 ? '+' : ''}${Math.round(s.units)}u</span>`;
         lbCard.appendChild(r);
-        if (matchWinHistoryPanelOpen[groupHistKey]) {
-          lbCard.appendChild(renderMatchWinHistory(grp.id, grp.matchWinLog, s.name, (start, end) => computeGroupHistoryForMember(grp, s.name, start, end).map(entry => ({ label: entry.label, value: entry.value }))));
-        }
       });
-      checkGroupThreshold(grp, stats).then(changed => { if (changed) render(); });
-
-      lbCard.appendChild(el('div', null, 'Match-Winning Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
-      const gThreshRow = el('div'); gThreshRow.style.cssText = 'display:flex;gap:6px;';
-      const gThreshInput = el('input'); gThreshInput.type = 'number'; gThreshInput.min = '1'; gThreshInput.step = '1'; gThreshInput.placeholder = 'No threshold';
-      gThreshInput.value = grp.winThreshold || '';
-      gThreshInput.style.cssText = 'flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box;';
-      const gThreshSaveBtn = el('button', null, 'Save');
-      gThreshSaveBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;';
-      gThreshSaveBtn.onclick = async () => {
-        const v = gThreshInput.value === '' ? null : Math.ceil(parseFloat(gThreshInput.value));
-        const idx = allPicks.findIndex(p => p.id === grp.id);
-        if (idx === -1) return;
-        const prevThresh = allPicks[idx].winThreshold;
-        allPicks[idx].winThreshold = v;
-        try { await savePicks(allPicks); render(); }
-        catch (e) { allPicks[idx].winThreshold = prevThresh; alert("Couldn't save (" + describeFetchError(e) + ") — try again."); }
-      };
-      gThreshRow.appendChild(gThreshInput); gThreshRow.appendChild(gThreshSaveBtn);
-      lbCard.appendChild(gThreshRow);
-      lbCard.appendChild(el('div', 'setup-hint', 'When anyone reaches this many units, they automatically win the match and the leaderboard resets to 0.'));
 
       const resetBtn = el('button', null, 'Reset Leaderboard Now');
       resetBtn.style.cssText = 'width:100%;margin-top:10px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
       resetBtn.onclick = async () => {
-        if (!confirm('Reset this leaderboard? Whoever\'s in the lead right now gets credit for winning this match, then everyone starts fresh.')) return;
+        if (!confirm('Reset this leaderboard? This just zeroes it out — no record is kept of who was ahead.')) return;
         const idx = allPicks.findIndex(p => p.id === grp.id);
         if (idx === -1) return;
         const nowIso = new Date().toISOString();
-        const prev = { leaderboardResetMode: allPicks[idx].leaderboardResetMode, leaderboardPeriodStart: allPicks[idx].leaderboardPeriodStart, matchWins: allPicks[idx].matchWins, matchWinLog: allPicks[idx].matchWinLog };
-        const currentLeader = ranked.length && ranked[0].units > 0 ? ranked[0].name : null;
-        if (currentLeader) {
-          const prevMatchWins = { ...(allPicks[idx].matchWins || {}) };
-          const prevLog = (allPicks[idx].matchWinLog || []).slice();
-          allPicks[idx].matchWins = { ...prevMatchWins, [currentLeader]: (prevMatchWins[currentLeader] || 0) + 1 };
-          allPicks[idx].matchWinLog = [...prevLog, { name: currentLeader, date: nowIso, periodStart: allPicks[idx].leaderboardPeriodStart || null }];
-        }
+        const prev = { leaderboardResetMode: allPicks[idx].leaderboardResetMode, leaderboardPeriodStart: allPicks[idx].leaderboardPeriodStart };
         allPicks[idx].leaderboardResetMode = 'manual';
         allPicks[idx].leaderboardPeriodStart = nowIso;
         try { await savePicks(allPicks); render(); }
