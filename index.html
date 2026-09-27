@@ -1763,6 +1763,22 @@ function renderFriendsScreen() {
           }
         });
 
+        const breakdown = computeH2HCategoryBreakdown(profile.name, f.name, tracker ? tracker.resetAt : null);
+        [['singles','Singles'],['pools','Pools'],['sides','Sides']].forEach(([catKey, catLabel]) => {
+          const cat = breakdown[catKey];
+          const catWrap = el('div'); catWrap.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid var(--border);';
+          catWrap.appendChild(el('div', null, catLabel)).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:4px;';
+          [profile.name, f.name].forEach(name => {
+            const c = cat[name];
+            const row = el('div'); row.style.cssText = 'display:flex;justify-content:space-between;font-size:11.5px;padding:2px 0;color:var(--text-dim);';
+            const recordTxt = `${c.wins}-${c.losses}`;
+            const valTxt = catKey === 'sides' ? '' : `<span style="font-weight:700;color:${c.units > 0 ? 'var(--accent)' : (c.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${c.units > 0 ? '+' : ''}${Math.round(c.units)}u</span>`;
+            row.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${recordTxt}</span></span>${valTxt}`;
+            catWrap.appendChild(row);
+          });
+          h2hCard.appendChild(catWrap);
+        });
+
         h2hCard.appendChild(el('div', null, 'Match-Winning Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
         const threshRow = el('div'); threshRow.style.cssText = 'display:flex;gap:6px;';
         const threshInput = el('input'); threshInput.type = 'number'; threshInput.min = '1'; threshInput.step = '1'; threshInput.placeholder = 'No threshold';
@@ -3369,7 +3385,7 @@ function renderScoreKeeperPlay() {
       const sheets = scores[yahtzeeViewingPlayer] || [];
       const editable = canEditColumn(viewingPlayerObj);
       const { tableWrap, colTotals } = buildScorecardTable(
-        ['Game 1 (\u00d71)','Game 2 (\u00d72)','Game 3 (\u00d73)'],
+        ['Single (\u00d71)','Double (\u00d72)','Triple (\u00d73)'],
         () => editable,
         (ci, key) => key === '__sheet__' ? sheets[ci] : (sheets[ci] || {})[key],
         (ci, key, val) => setYahtzeeCell(yahtzeeViewingPlayer, ci, key, val)
@@ -3385,7 +3401,7 @@ function renderScoreKeeperPlay() {
       wrap.appendChild(tableWrap);
       const combined = colTotals.reduce((s,t,i) => s + t.grand * (i + 1), 0);
       wrap.appendChild(el('div', null, `Combined Total: ${combined}`)).style.cssText = 'font-size:14px;font-weight:800;text-align:center;margin-bottom:8px;';
-      wrap.appendChild(el('div', 'setup-hint', (editable ? "These three sheets are yours — fill them in as you play. Switch the menu above to check anyone else's sheets. " : `Viewing ${yahtzeeViewingPlayer}'s sheets \u2014 read-only. `) + 'Each column scores normally, then Game 2\'s total counts double and Game 3\'s counts triple.'));
+      wrap.appendChild(el('div', 'setup-hint', (editable ? "These three sheets are yours — fill them in as you play. Switch the menu above to check anyone else's sheets. " : `Viewing ${yahtzeeViewingPlayer}'s sheets \u2014 read-only. `) + "Each column scores normally, then Double's total counts double and Triple's counts triple."));
     }
 
     if (game.status !== 'completed') {
@@ -6213,6 +6229,54 @@ function computeGroupLeaderboardStats(grp) {
     });
   });
   return stats;
+}
+function computeH2HCategoryBreakdown(nameA, nameB, resetAt) {
+  const periodStart = new Date(resetAt || '1970-01-01T00:00:00.000Z');
+  const singles = { [nameA]: { wins: 0, losses: 0, units: 0 }, [nameB]: { wins: 0, losses: 0, units: 0 } };
+  const pools = { [nameA]: { wins: 0, losses: 0, units: 0 }, [nameB]: { wins: 0, losses: 0, units: 0 } };
+  const sides = { [nameA]: { wins: 0, losses: 0 }, [nameB]: { wins: 0, losses: 0 } };
+
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.propType !== 'golf_team' && p.status === 'accepted' && new Date(p.timestamp) >= periodStart &&
+    ((p.creator === nameA && p.acceptedBy === nameB) || (p.creator === nameB && p.acceptedBy === nameA))
+  ).forEach(ch => {
+    const profitCreator = computeChallengeProfit(ch, true);
+    const profitAcceptor = computeChallengeProfit(ch, false);
+    if (profitCreator === null || profitAcceptor === null) return;
+    if (profitCreator > 0) { singles[ch.creator].wins++; singles[ch.acceptedBy].losses++; }
+    else if (profitAcceptor > 0) { singles[ch.acceptedBy].wins++; singles[ch.creator].losses++; }
+    singles[ch.creator].units += profitCreator;
+    singles[ch.acceptedBy].units += profitAcceptor;
+  });
+
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool' && p.status === 'settled' && new Date(p.timestamp) >= periodStart &&
+    (p.participants || []).some(pt => pt.name === nameA) && (p.participants || []).some(pt => pt.name === nameB)
+  ).forEach(pool => {
+    const scoreA = poolParticipantScore(pool, pool.participants.find(pt => pt.name === nameA)).total;
+    const scoreB = poolParticipantScore(pool, pool.participants.find(pt => pt.name === nameB)).total;
+    pools[nameA].units += scoreA; pools[nameB].units += scoreB;
+    if (scoreA > scoreB) { pools[nameA].wins++; pools[nameB].losses++; }
+    else if (scoreB > scoreA) { pools[nameB].wins++; pools[nameA].losses++; }
+  });
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'golf_team' && p.status === 'settled' && new Date(p.timestamp) >= periodStart &&
+    (p.participants || []).some(pt => pt.name === nameA) && (p.participants || []).some(pt => pt.name === nameB)
+  ).forEach(pool => {
+    const scoreA = computeGolfTeamParticipantScore(pool, pool.participants.find(pt => pt.name === nameA)).total;
+    const scoreB = computeGolfTeamParticipantScore(pool, pool.participants.find(pt => pt.name === nameB)).total;
+    if (scoreA === null || scoreB === null) return;
+    pools[nameA].units += -scoreA; pools[nameB].units += -scoreB;
+    if (scoreA < scoreB) { pools[nameA].wins++; pools[nameB].losses++; }
+    else if (scoreB < scoreA) { pools[nameB].wins++; pools[nameA].losses++; }
+  });
+
+  allPicks.filter(p => p.poolType === 'scoreKeeperGame' && p.status === 'completed' && new Date(p.timestamp) >= periodStart &&
+    (p.players || []).some(pl => pl.name === nameA) && (p.players || []).some(pl => pl.name === nameB)
+  ).forEach(game => {
+    if (!game.winner) return;
+    if (game.winner === nameA) { sides[nameA].wins++; sides[nameB].losses++; }
+    else if (game.winner === nameB) { sides[nameB].wins++; sides[nameA].losses++; }
+  });
+
+  return { singles, pools, sides };
 }
 function computeH2HStats(nameA, nameB, resetAt) {
   const periodStart = new Date(resetAt || '1970-01-01T00:00:00.000Z');
