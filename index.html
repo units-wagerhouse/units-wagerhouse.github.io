@@ -1716,122 +1716,47 @@ function renderFriendsScreen() {
       if (friendProfileView === f.uid) {
         const pairKey = h2hTrackerId(profile.name, f.name);
         const tracker = allPicks.find(p => p.poolType === 'h2hTracker' && p.id === pairKey);
-        const quickStats = computeH2HStats(profile.name, f.name, tracker ? tracker.resetAt : null);
-        const matchWins = (tracker && tracker.matchWins) || {};
-        checkH2HThreshold(tracker, profile.name, f.name, quickStats).then(changed => { if (changed) render(); });
+        const categoryResetAt = (tracker && tracker.categoryResetAt) || {};
 
         const h2hCard = el('div'); h2hCard.style.cssText = 'background:var(--surface-2);border-radius:8px;padding:10px;margin-top:8px;';
-        h2hCard.appendChild(el('div', null, 'Current matchup')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:6px;';
-        const h2hHistory = computeH2HHistory(profile.name, f.name, tracker ? tracker.resetAt : null);
-        [profile.name, f.name].forEach(name => {
-          const s = quickStats[name];
-          const historyKey = pairKey + '_' + name;
-          const r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:4px 0;cursor:pointer;';
-          const nameSpan = el('span');
-          nameSpan.innerHTML = `${matchupHistoryOpen[historyKey] ? '\u25be' : '\u25b8'} ${name}${name === profile.name ? ' (you)' : ''} `;
-          const winsSpan = el('span', null, `${matchWins[name] || 0} match wins`);
-          winsSpan.style.cssText = 'color:var(--text-faint);text-decoration:underline;cursor:pointer;';
-          winsSpan.onclick = (e) => { e.stopPropagation(); matchWinHistoryPanelOpen[historyKey] = !matchWinHistoryPanelOpen[historyKey]; render(); };
-          nameSpan.appendChild(winsSpan);
-          r.appendChild(nameSpan);
-          const valSpan = el('span', null, `${s.units > 0 ? '+' : ''}${Math.round(s.units)}u`);
-          valSpan.style.cssText = `font-weight:700;color:${s.units > 0 ? 'var(--accent)' : (s.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};`;
-          r.appendChild(valSpan);
-          r.onclick = () => { matchupHistoryOpen[historyKey] = !matchupHistoryOpen[historyKey]; render(); };
-          h2hCard.appendChild(r);
-          if (matchWinHistoryPanelOpen[historyKey]) {
-            h2hCard.appendChild(renderMatchWinHistory(pairKey, tracker ? tracker.matchWinLog : [], name, (start, end) => computeH2HHistory(profile.name, f.name, start)
-              .filter(entry => new Date(entry.date) <= new Date(end))
-              .map(entry => ({ label: (entry.labels && entry.labels[name]) || entry.label, value: entry.results[name] }))
-              .filter(e => e.value !== undefined)));
-          }
-          if (matchupHistoryOpen[historyKey]) {
-            const histWrap = el('div'); histWrap.style.cssText = 'padding:4px 0 6px 14px;';
-            if (!h2hHistory.length) { histWrap.appendChild(el('div', 'empty', 'No games yet this matchup.')); }
-            else {
-              h2hHistory.forEach(entry => {
-                const val = entry.results[name];
-                if (val === undefined) return;
-                const label = (entry.labels && entry.labels[name]) || entry.label;
-                const dateStr = new Date(entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                const row = el('div'); row.style.cssText = 'display:flex;justify-content:space-between;font-size:11px;padding:3px 0;color:var(--text-dim);';
-                row.innerHTML = `<span>${label} <span style="color:var(--text-faint);">\u00b7 ${dateStr}</span></span><span style="font-weight:700;color:${val > 0 ? 'var(--accent)' : (val < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${val > 0 ? '+' : ''}${Math.round(val)}u</span>`;
-                histWrap.appendChild(row);
-              });
-            }
-            h2hCard.appendChild(histWrap);
-          }
-        });
 
-        const breakdown = computeH2HCategoryBreakdown(profile.name, f.name, tracker ? tracker.resetAt : null);
-        [['singles','Singles'],['pools','Pools'],['sides','Sides']].forEach(([catKey, catLabel]) => {
+        const breakdown = computeH2HCategoryBreakdown(profile.name, f.name, categoryResetAt);
+        [['singles','Singles'],['pools','Pools'],['sides','Sides']].forEach(([catKey, catLabel], i) => {
           const cat = breakdown[catKey];
-          const catWrap = el('div'); catWrap.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid var(--border);';
-          catWrap.appendChild(el('div', null, catLabel)).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin-bottom:4px;';
+          const catWrap = el('div'); catWrap.style.cssText = i === 0 ? 'padding-bottom:8px;' : 'margin-top:10px;padding-top:8px;padding-bottom:8px;border-top:1px solid var(--border);';
+          const headerRow = el('div'); headerRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;';
+          headerRow.appendChild(el('div', null, catLabel)).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;';
+          const resetLink = el('span', null, 'Reset');
+          resetLink.style.cssText = 'font-size:10.5px;color:var(--text-faint);text-decoration:underline;cursor:pointer;';
+          resetLink.onclick = async () => {
+            if (!confirm(`Reset the ${catLabel} tally with ${f.name}? This just zeroes it out — no record is kept of who was ahead.`)) return;
+            const idx = allPicks.findIndex(p => p.id === pairKey);
+            const nowIso = new Date().toISOString();
+            if (idx === -1) {
+              const rec = { id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, categoryResetAt: { [catKey]: nowIso }, timestamp: nowIso };
+              allPicks.push(rec);
+              try { await savePicks(allPicks); render(); } catch (e) { allPicks.pop(); alert("Couldn't reset (" + describeFetchError(e) + ") — try again."); }
+            } else {
+              const prev = { ...allPicks[idx] };
+              allPicks[idx].categoryResetAt = { ...(allPicks[idx].categoryResetAt || {}), [catKey]: nowIso };
+              try { await savePicks(allPicks); render(); } catch (e) { allPicks[idx] = prev; alert("Couldn't reset (" + describeFetchError(e) + ") — try again."); }
+            }
+          };
+          headerRow.appendChild(resetLink);
+          catWrap.appendChild(headerRow);
           [profile.name, f.name].forEach(name => {
             const c = cat[name];
-            const row = el('div'); row.style.cssText = 'display:flex;justify-content:space-between;font-size:11.5px;padding:2px 0;color:var(--text-dim);';
-            const recordTxt = `${c.wins}-${c.losses}`;
-            const valTxt = catKey === 'sides' ? '' : `<span style="font-weight:700;color:${c.units > 0 ? 'var(--accent)' : (c.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${c.units > 0 ? '+' : ''}${Math.round(c.units)}u</span>`;
-            row.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''} <span style="color:var(--text-faint);">${recordTxt}</span></span>${valTxt}`;
+            const row = el('div'); row.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:2px 0;color:var(--text-dim);';
+            if (catKey === 'sides') {
+              row.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''}</span><span style="font-weight:700;">${c.wins} win${c.wins === 1 ? '' : 's'}</span>`;
+            } else {
+              row.innerHTML = `<span>${name}${name === profile.name ? ' (you)' : ''}</span><span style="font-weight:700;color:${c.units > 0 ? 'var(--accent)' : (c.units < 0 ? 'var(--danger)' : 'var(--text-dim)')};">${c.units > 0 ? '+' : ''}${Math.round(c.units)}u</span>`;
+            }
             catWrap.appendChild(row);
           });
           h2hCard.appendChild(catWrap);
         });
 
-        h2hCard.appendChild(el('div', null, 'Match-Winning Score')).style.cssText = 'font-size:10.5px;color:var(--text-faint);text-transform:uppercase;font-weight:700;margin:10px 0 4px;';
-        const threshRow = el('div'); threshRow.style.cssText = 'display:flex;gap:6px;';
-        const threshInput = el('input'); threshInput.type = 'number'; threshInput.min = '1'; threshInput.step = '1'; threshInput.placeholder = 'No threshold';
-        threshInput.value = (tracker && tracker.winThreshold) ? tracker.winThreshold : '';
-        threshInput.style.cssText = 'flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box;';
-        const threshSaveBtn = el('button', null, 'Save');
-        threshSaveBtn.style.cssText = 'background:none;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;';
-        threshSaveBtn.onclick = async () => {
-          const v = threshInput.value === '' ? null : Math.ceil(parseFloat(threshInput.value));
-          const idx = allPicks.findIndex(p => p.id === pairKey);
-          const nowIso = new Date().toISOString();
-          if (idx === -1) {
-            allPicks.push({ id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, matchWins: {}, winThreshold: v, timestamp: nowIso });
-          } else {
-            allPicks[idx].winThreshold = v;
-          }
-          try { await savePicks(allPicks); render(); }
-          catch (e) { alert("Couldn't save (" + describeFetchError(e) + ") — try again."); }
-        };
-        threshRow.appendChild(threshInput); threshRow.appendChild(threshSaveBtn);
-        h2hCard.appendChild(threshRow);
-        h2hCard.appendChild(el('div', 'setup-hint', 'When either of you reaches this many units, they automatically win the match and the score resets to 0.'));
-
-        const resetBtn = el('button', null, 'Reset Matchup Now');
-        resetBtn.style.cssText = 'width:100%;margin-top:10px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
-        resetBtn.onclick = async () => {
-          if (!confirm(`Reset your matchup with ${f.name}? Whoever's ahead right now gets credit for winning this match, then the score starts fresh.`)) return;
-          const idx = allPicks.findIndex(p => p.id === pairKey);
-          const nowIso = new Date().toISOString();
-          const leaderName = quickStats[profile.name].units > quickStats[f.name].units ? profile.name : (quickStats[f.name].units > quickStats[profile.name].units ? f.name : null);
-          let prevRec = null;
-          if (idx === -1) {
-            const newMatchWins = leaderName ? { [leaderName]: 1 } : {};
-            const newLog = leaderName ? [{ name: leaderName, date: nowIso, periodStart: null }] : [];
-            const rec = { id: pairKey, poolType: 'h2hTracker', playerA: profile.name, playerB: f.name, resetAt: nowIso, matchWins: newMatchWins, matchWinLog: newLog, winThreshold: null, timestamp: nowIso };
-            allPicks.push(rec);
-          } else {
-            prevRec = { ...allPicks[idx] };
-            const prevMatchWins = { ...(allPicks[idx].matchWins || {}) };
-            const prevLog = (allPicks[idx].matchWinLog || []).slice();
-            if (leaderName) {
-              allPicks[idx].matchWins = { ...prevMatchWins, [leaderName]: (prevMatchWins[leaderName] || 0) + 1 };
-              allPicks[idx].matchWinLog = [...prevLog, { name: leaderName, date: nowIso, periodStart: allPicks[idx].resetAt || null }];
-            }
-            allPicks[idx].resetAt = nowIso;
-          }
-          try { await savePicks(allPicks); render(); }
-          catch (e) {
-            if (idx === -1) allPicks.pop(); else allPicks[idx] = prevRec;
-            alert("Couldn't reset (" + describeFetchError(e) + ") — try again.");
-          }
-        };
-        h2hCard.appendChild(resetBtn);
         h2hCard.appendChild(renderFriendCommentsSection(f));
         wrap.appendChild(h2hCard);
       }
@@ -6230,50 +6155,47 @@ function computeGroupLeaderboardStats(grp) {
   });
   return stats;
 }
-function computeH2HCategoryBreakdown(nameA, nameB, resetAt) {
-  const periodStart = new Date(resetAt || '1970-01-01T00:00:00.000Z');
-  const singles = { [nameA]: { wins: 0, losses: 0, units: 0 }, [nameB]: { wins: 0, losses: 0, units: 0 } };
-  const pools = { [nameA]: { wins: 0, losses: 0, units: 0 }, [nameB]: { wins: 0, losses: 0, units: 0 } };
-  const sides = { [nameA]: { wins: 0, losses: 0 }, [nameB]: { wins: 0, losses: 0 } };
+function computeH2HCategoryBreakdown(nameA, nameB, resetPoints) {
+  const rp = resetPoints || {};
+  const singlesStart = new Date(rp.singles || '1970-01-01T00:00:00.000Z');
+  const poolsStart = new Date(rp.pools || '1970-01-01T00:00:00.000Z');
+  const sidesStart = new Date(rp.sides || '1970-01-01T00:00:00.000Z');
+  const singles = { [nameA]: { units: 0 }, [nameB]: { units: 0 } };
+  const pools = { [nameA]: { units: 0 }, [nameB]: { units: 0 } };
+  const sides = { [nameA]: { wins: 0 }, [nameB]: { wins: 0 } };
 
-  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.propType !== 'golf_team' && p.status === 'accepted' && new Date(p.timestamp) >= periodStart &&
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType !== 'combo_pool' && p.propType !== 'golf_team' && p.status === 'accepted' && new Date(p.timestamp) >= singlesStart &&
     ((p.creator === nameA && p.acceptedBy === nameB) || (p.creator === nameB && p.acceptedBy === nameA))
   ).forEach(ch => {
     const profitCreator = computeChallengeProfit(ch, true);
     const profitAcceptor = computeChallengeProfit(ch, false);
     if (profitCreator === null || profitAcceptor === null) return;
-    if (profitCreator > 0) { singles[ch.creator].wins++; singles[ch.acceptedBy].losses++; }
-    else if (profitAcceptor > 0) { singles[ch.acceptedBy].wins++; singles[ch.creator].losses++; }
     singles[ch.creator].units += profitCreator;
     singles[ch.acceptedBy].units += profitAcceptor;
   });
 
-  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool' && p.status === 'settled' && new Date(p.timestamp) >= periodStart &&
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'combo_pool' && p.status === 'settled' && new Date(p.timestamp) >= poolsStart &&
     (p.participants || []).some(pt => pt.name === nameA) && (p.participants || []).some(pt => pt.name === nameB)
   ).forEach(pool => {
     const scoreA = poolParticipantScore(pool, pool.participants.find(pt => pt.name === nameA)).total;
     const scoreB = poolParticipantScore(pool, pool.participants.find(pt => pt.name === nameB)).total;
     pools[nameA].units += scoreA; pools[nameB].units += scoreB;
-    if (scoreA > scoreB) { pools[nameA].wins++; pools[nameB].losses++; }
-    else if (scoreB > scoreA) { pools[nameB].wins++; pools[nameA].losses++; }
   });
-  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'golf_team' && p.status === 'settled' && new Date(p.timestamp) >= periodStart &&
+  allPicks.filter(p => p.poolType === 'challenge' && p.propType === 'golf_team' && p.status === 'settled' && new Date(p.timestamp) >= poolsStart &&
     (p.participants || []).some(pt => pt.name === nameA) && (p.participants || []).some(pt => pt.name === nameB)
   ).forEach(pool => {
     const scoreA = computeGolfTeamParticipantScore(pool, pool.participants.find(pt => pt.name === nameA)).total;
     const scoreB = computeGolfTeamParticipantScore(pool, pool.participants.find(pt => pt.name === nameB)).total;
     if (scoreA === null || scoreB === null) return;
     pools[nameA].units += -scoreA; pools[nameB].units += -scoreB;
-    if (scoreA < scoreB) { pools[nameA].wins++; pools[nameB].losses++; }
-    else if (scoreB < scoreA) { pools[nameB].wins++; pools[nameA].losses++; }
   });
 
-  allPicks.filter(p => p.poolType === 'scoreKeeperGame' && p.status === 'completed' && new Date(p.timestamp) >= periodStart &&
+  allPicks.filter(p => p.poolType === 'scoreKeeperGame' && p.status === 'completed' && new Date(p.timestamp) >= sidesStart &&
     (p.players || []).some(pl => pl.name === nameA) && (p.players || []).some(pl => pl.name === nameB)
   ).forEach(game => {
     if (!game.winner) return;
-    if (game.winner === nameA) { sides[nameA].wins++; sides[nameB].losses++; }
-    else if (game.winner === nameB) { sides[nameB].wins++; sides[nameA].losses++; }
+    if (game.winner === nameA) { sides[nameA].wins++; }
+    else if (game.winner === nameB) { sides[nameB].wins++; }
   });
 
   return { singles, pools, sides };
