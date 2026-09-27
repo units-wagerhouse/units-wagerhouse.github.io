@@ -2947,7 +2947,7 @@ function renderScoreKeeperSection() {
 function renderScoreKeeperSetup() {
   const wrap = el('div');
   const backBtn = el('button', null, '\u2190 Back');
-  backBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;margin-bottom:10px;';
+  backBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:700;margin-bottom:14px;';
   backBtn.onclick = () => { scoreKeeperView = 'list'; render(); };
   wrap.appendChild(backBtn);
 
@@ -3166,7 +3166,7 @@ function renderScoreKeeperPlay() {
 
   if (game.mode === 'yahtzee') {
     const isCreator = game.creator === profile.name;
-    const canEditColumn = (p) => game.status !== 'completed' && (p.uid === profile.uid || (p.isGuest && isCreator));
+    const canEditColumn = (p) => game.status !== 'completed';
     const scores = game.yahtzeeScores || {};
     const variant = game.yahtzeeVariant || 'single';
 
@@ -3251,7 +3251,7 @@ function renderScoreKeeperPlay() {
         (ci, key, val) => setYahtzeeCell(players[ci].name, 0, key, val)
       );
       wrap.appendChild(tableWrap);
-      wrap.appendChild(el('div', 'setup-hint', "Each column syncs across everyone's phone — fill in your own scores as you go, and check back to see how everyone else is doing."));
+      wrap.appendChild(el('div', 'setup-hint', "Everyone can see and edit every column — one person can enter for the whole table, or each player can fill in their own on their own phone, whatever's easier."));
     } else {
       // Triple Yahtzee: full-screen single-player view (3 sheets) with a menu to switch whose sheets you're looking at.
       if (!yahtzeeViewingPlayer || !players.some(p => p.name === yahtzeeViewingPlayer)) {
@@ -3285,7 +3285,7 @@ function renderScoreKeeperPlay() {
       wrap.appendChild(tableWrap);
       const combined = colTotals.reduce((s,t,i) => s + t.grand * (i + 1), 0);
       wrap.appendChild(el('div', null, `Combined Total: ${combined}`)).style.cssText = 'font-size:14px;font-weight:800;text-align:center;margin-bottom:8px;';
-      wrap.appendChild(el('div', 'setup-hint', (editable ? "These three sheets are yours — fill them in as you play. Switch the menu above to check anyone else's sheets. " : `Viewing ${yahtzeeViewingPlayer}'s sheets \u2014 read-only. `) + "Each column scores normally, then Double's total counts double and Triple's counts triple."));
+      wrap.appendChild(el('div', 'setup-hint', "Use the menu above to switch between whose three sheets you're looking at — anyone can fill in anyone's sheets, so one person can run the whole table if that's easier. Each column scores normally, then Double's total counts double and Triple's counts triple."));
     }
 
     if (game.status !== 'completed') {
@@ -4151,12 +4151,12 @@ function renderGolfTeamPoolCard(pool) {
     card.appendChild(leaveBtn);
   }
 
-  if (isCreator && pool.status === 'open') {
+  if (isCreator && (pool.status === 'open' || pool.status === 'settled')) {
     const delBtn = el('button', null, '\u2715 Delete this pool');
     delBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
     delBtn.onclick = async () => {
-      if (participants.length) { alert("Can't delete a pool once someone has joined."); return; }
-      if (!confirm('Delete this pool permanently?')) return;
+      if (pool.status === 'open' && participants.length) { alert("Can't delete a pool once someone has joined."); return; }
+      if (!confirm(pool.status === 'settled' ? "Delete this completed pool permanently? This removes it for everyone who joined, not just you." : 'Delete this pool permanently?')) return;
       const idx = allPicks.findIndex(p => p.id === pool.id);
       if (idx === -1) return;
       const removed = allPicks.splice(idx, 1)[0];
@@ -4316,12 +4316,12 @@ function renderPoolCard(pool) {
     card.appendChild(leaveBtn);
   }
 
-  if (isCreator && pool.status === 'open') {
+  if (isCreator && (pool.status === 'open' || pool.status === 'settled')) {
     const delBtn = el('button', null, '\u2715 Delete this pool');
     delBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
     delBtn.onclick = async () => {
-      if (participants.length) { alert("Can't delete a pool once someone has joined."); return; }
-      if (!confirm('Delete this pool permanently?')) return;
+      if (pool.status === 'open' && participants.length) { alert("Can't delete a pool once someone has joined."); return; }
+      if (!confirm(pool.status === 'settled' ? "Delete this completed pool permanently? This removes it for everyone who joined, not just you." : 'Delete this pool permanently?')) return;
       const idx = allPicks.findIndex(p => p.id === pool.id);
       if (idx === -1) return;
       const removed = allPicks.splice(idx, 1)[0];
@@ -4946,10 +4946,16 @@ function renderChallengeRow(ch) {
     card.appendChild(el('div', null, txt)).style.cssText = `font-size:13px;font-weight:700;color:${color};`;
   }
 
+  const isCompleted = (ch.status === 'declined') || (ch.status === 'accepted' && settlePick(ch).status !== 'pending');
   if (ch.creator === profile.name && ch.status === 'open') {
     const delBtn = el('button', null, '\u2715 Delete this challenge');
     delBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
     delBtn.onclick = () => deleteChallenge(ch);
+    card.appendChild(delBtn);
+  } else if ((ch.creator === profile.name || ch.acceptedBy === profile.name) && isCompleted) {
+    const delBtn = el('button', null, '\u2715 Delete this challenge');
+    delBtn.style.cssText = 'width:100%;margin-top:8px;background:none;border:1px solid var(--border);color:var(--text-faint);border-radius:6px;padding:7px;font-size:11px;font-weight:700;';
+    delBtn.onclick = () => deleteCompletedChallenge(ch);
     card.appendChild(delBtn);
   }
   if (ch.status === 'accepted' && gameIndex[ch.gameId]) {
@@ -5073,6 +5079,14 @@ async function deleteChallenge(ch) {
   allPicks.push(refundTx);
   try { await savePicks(allPicks); render(); }
   catch (e) { allPicks.splice(idx, 0, removed); if (refundTx) allPicks.pop(); alert("Couldn't delete (" + describeFetchError(e) + ") — try again."); }
+}
+async function deleteCompletedChallenge(ch) {
+  if (!confirm('Delete this completed challenge permanently? This removes it for the other person too, not just you.')) return;
+  const idx = allPicks.findIndex(p => p.id === ch.id);
+  if (idx === -1) return;
+  const removed = allPicks.splice(idx, 1)[0];
+  try { await savePicks(allPicks); render(); }
+  catch (e) { allPicks.splice(idx, 0, removed); alert("Couldn't delete (" + describeFetchError(e) + ") — try again."); }
 }
 
 function generateHouseChallenges(limit) {
